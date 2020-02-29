@@ -6,8 +6,4 @@
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "before",
   "boot": "auto"
-},
-"ports": {
-    "8000/tcp":50000
-}
 }
