@@ -1,7 +1,7 @@
 {
   "name": "Jenkins CI",
   "version": "0.0.1",
-  "slug": "jenkins_ci",
+  "slug": "jenkinsci",
   "description": "The Jenkins Continuous Integration and Delivery serve",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "before",
