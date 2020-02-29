@@ -1,16 +1,31 @@
+###############################################################################
+# Get prebuild container
+###############################################################################
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
+
+###############################################################################
+# Set enviromental variables
+###############################################################################
 ENV LANG C.UTF-8
 
-RUN apt-get install -y git curl && curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && apt-get install -y git-lfs && git lfs install && rm -rf /var/lib/apt/lists/*
+
+###############################################################################
+# Build the add-on.
+###############################################################################
 
 
-
+###############################################################################
 # Install requirements for add-on
+###############################################################################
 #RUN apk add --no-cache python3
 
+
+###############################################################################
 # So let's set it to our add-on persistent data directory.
+# and copy over some stuff
+###############################################################################
 # WORKDIR /data
 
 # Copy data for add-on
@@ -18,4 +33,8 @@ RUN apt-get install -y git curl && curl -s https://packagecloud.io/install/repos
 
 # RUN chmod a+x /run.sh
 
-# CMD [ "/run.sh" ]
+
+###############################################################################
+# start run.sh
+###############################################################################
+CMD [ "/run.sh" ]
