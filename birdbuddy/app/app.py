@@ -6,14 +6,16 @@ import logging
 import os
 import posixpath
 import sqlite3
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiohttp
 from aiohttp import web
 import paramiko
+from birdbuddy.exceptions import AuthenticationFailedError
 from birdbuddy.client import BirdBuddy
-from birdbuddy.postcards import PostcardAnalysis, CollectedPostcard
+from birdbuddy.postcards import CollectedPostcard
 
 LOG = logging.getLogger("birdbuddy_addon")
 MAX_MEDIA = 100 * 1024 * 1024
@@ -21,6 +23,22 @@ MAX_MEDIA = 100 * 1024 * 1024
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+class ConfigurationError(ValueError):
+    """A configuration problem whose message is safe to show."""
+
+
+def sync_error(exc, stage):
+    if isinstance(exc, ConfigurationError):
+        return str(exc)
+    if isinstance(exc, AuthenticationFailedError):
+        return ("Aanmelden bij Bird Buddy mislukt. Controleer je e-mailadres en "
+                "wachtwoord in de add-onconfiguratie. Gebruik een Bird Buddy-account "
+                "met e-mail/wachtwoord; aanmelden via Google/Apple/Facebook werkt hier niet.")
+    if isinstance(exc, (asyncio.TimeoutError, aiohttp.ClientConnectionError)):
+        return f"Bird Buddy is niet bereikbaar tijdens {stage}. Controleer de internetverbinding; de add-on probeert het opnieuw."
+    return f"Bird Buddy ophalen mislukt tijdens {stage} ({type(exc).__name__}). Bekijk de add-onlogboeken voor de foutlocatie."
 
 
 class Store:
@@ -36,6 +54,8 @@ class Store:
             card TEXT, destination TEXT, done INTEGER DEFAULT 0, error TEXT,
             PRIMARY KEY(card, destination));
           CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+          CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY);
+          INSERT OR IGNORE INTO seen SELECT id FROM cards;
         ''')
 
     def get(self, key):
@@ -52,6 +72,7 @@ class Store:
 
     def add(self, card, destinations):
         with self.db:
+            self.db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (card["id"],))
             self.db.execute("INSERT INTO cards VALUES (?,?,?,?)", (
                 card["id"], card["created"], card["title"], json.dumps(card["media"])))
             for destination, skip in destinations.items():
@@ -101,6 +122,7 @@ class Monitor:
         self.status = {"last_success": None, "error": None, "feeders": []}
         self.wake = asyncio.Event()
         self.session = None
+        self.stage = "configuratie controleren"
 
     async def download(self, url, filename):
         target = self.store.root / filename
@@ -122,16 +144,22 @@ class Monitor:
             temporary.unlink(missing_ok=True)
 
     async def sync(self):
-        if not self.config["email"] or not self.config["password"]:
-            raise ValueError("Missing Bird Buddy credentials")
+        self.stage = "configuratie controleren"
+        if not str(self.config.get("email") or "").strip() or not self.config.get("password"):
+            raise ConfigurationError(
+                "Bird Buddy-inloggegevens ontbreken. Vul email en password in bij "
+                "de add-onconfiguratie, sla op en herstart de add-on.")
+        self.stage = "aanmelden en apparaatstatus ophalen"
         await self.bb.refresh()
+        self.stage = "apparaatstatus verwerken"
         self.status["feeders"] = [
             {"name": f.name, "state": f.state.value, "battery": f.battery.get("percentage"),
              "charging": f.battery.get("charging"), "signal": f.signal.get("rssi"),
              "firmware": f.version} for f in self.bb.feeders.values()]
         since = datetime.now(timezone.utc) - timedelta(days=self.config["history_days"])
+        self.stage = "recente kaartjes ophalen"
         cards = await self.bb.refresh_feed(since=since)
-        existing = {c["id"] for c in self.store.cards()}
+        existing = {r[0] for r in self.store.db.execute("SELECT id FROM seen")}
         destinations = {}
         for dest in ("telegram", "sftp"):
             cfg = self.config[dest]
@@ -145,18 +173,18 @@ class Monitor:
             kind = node.get("__typename")
             if kind not in ("FeedItemNewPostcard", "FeedItemCollectedPostcard"):
                 continue
+            media = []
             try:
-                # Preview data is read directly: do not invoke AI or collect mutations.
-                postcard = PostcardAnalysis(node) if kind == "FeedItemNewPostcard" else CollectedPostcard(node)
-                media = []
+                # New feed nodes have no media until visitor identification.
+                postcard = await self.bb.identify_postcard(node) if kind == "FeedItemNewPostcard" else CollectedPostcard(node)
                 for item in postcard.medias:
                     url = item.content_url or item.thumbnail_url
                     if not url:
                         raise ValueError("Missing media URL")
                     filename = hashlib.sha256((node.node_id + item.id).encode()).hexdigest() + (
                         ".mp4" if item.is_video else ".jpg")
-                    await self.download(url, filename)
                     media.append({"file": filename, "video": item.is_video})
+                    await self.download(url, filename)
                 if not media:
                     continue
                 title = ", ".join(s.name for s in postcard.species) or "Vogelbezoek"
@@ -164,6 +192,8 @@ class Monitor:
                                 "title": title, "media": media}, destinations)
             except Exception as exc:
                 failed = True
+                for item in media:
+                    (self.store.root / item["file"]).unlink(missing_ok=True)
                 LOG.warning("Kaartje ophalen mislukt (%s)", type(exc).__name__)
         if not failed:
             for dest in destinations:
@@ -218,16 +248,23 @@ class Monitor:
                                               (type(exc).__name__, card["id"], dest))
                     LOG.warning("%s verzending mislukt (%s)", dest, type(exc).__name__)
 
+    async def check(self):
+        try:
+            await asyncio.wait_for(self.sync(), timeout=240)
+        except Exception as exc:
+            self.status["error"] = sync_error(exc, self.stage)
+            # Include code locations, but never upstream exception text or locals.
+            locations = " > ".join(
+                f"{Path(frame.filename).name}:{frame.lineno} ({frame.name})"
+                for frame in traceback.extract_tb(exc.__traceback__))
+            LOG.warning("%s | %s", self.status["error"], locations)
+
     async def run(self):
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
             self.session = session
             while True:
                 self.wake.clear()
-                try:
-                    await asyncio.wait_for(self.sync(), timeout=240)
-                except Exception as exc:
-                    self.status["error"] = "Bird Buddy ophalen mislukt: " + type(exc).__name__
-                    LOG.warning("Bird Buddy ophalen mislukt (%s)", type(exc).__name__)
+                await self.check()
                 await self.deliver()
                 self.store.prune(self.config["keep_cards"])
                 try:
