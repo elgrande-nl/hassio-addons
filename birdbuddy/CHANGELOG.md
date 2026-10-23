@@ -1,3 +1,17 @@
+# 0.2.0
+
+- Ophaalplanning in de webinterface: elk uur of dagelijks op een vast lokaal tijdstip.
+- Bewaar instellingen en geplande pogingen over herstarts, met tijdzone- en zomertijdondersteuning.
+- Toon de volgende geplande controle; poll_seconds wordt niet meer gebruikt.
+- Rustig antraciet, gedempt groen en zilvergrijs ontwerp met vier waarnemingen per pagina.
+
+# 0.1.9
+
+- Begrens Telegram-tests tot 20 MiB totaal en foto’s tot 10 MiB voordat Home Assistant bestanden inleest.
+- Maximaal vier automatische mediaverzendpogingen per ronde en één Home Assistant Telegram-aanroep tegelijk.
+- Weiger gelijktijdige tests en toon gerichte uitleg bij geweigerde bestandstoegang.
+- Log versie en proces-ID bij opstarten voor diagnose van herstarts.
+
 # 0.1.8
 
 - Telegram-test verstuurt de nieuwste lokaal opgeslagen waarneming met alle foto’s en video’s.

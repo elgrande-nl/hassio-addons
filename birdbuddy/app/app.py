@@ -9,6 +9,7 @@ import sqlite3
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 from aiohttp import web
@@ -19,6 +20,8 @@ from birdbuddy.postcards import CollectedPostcard
 
 LOG = logging.getLogger("birdbuddy_addon")
 MAX_MEDIA = 100 * 1024 * 1024
+MAX_TELEGRAM_BATCH = 20 * 1024 * 1024
+MAX_DELIVERIES_PER_CYCLE = 4
 
 
 def now():
@@ -27,6 +30,42 @@ def now():
 
 class ConfigurationError(ValueError):
     """A configuration problem whose message is safe to show."""
+
+
+def validate_schedule(value):
+    if not isinstance(value, dict) or value.get("mode") not in ("hourly", "daily"):
+        raise ConfigurationError("Kies elk uur of eenmaal per dag.")
+    time = value.get("time", "08:00")
+    try:
+        if not isinstance(time, str) or len(time) != 5 or time[2] != ":":
+            raise ValueError()
+        hour, minute = map(int, time.split(":"))
+        if not 0 <= hour < 24 or not 0 <= minute < 60:
+            raise ValueError()
+        zone = value.get("timezone", "Europe/Amsterdam")
+        if not isinstance(zone, str):
+            raise ValueError()
+        ZoneInfo(zone)
+    except (ValueError, ZoneInfoNotFoundError, TypeError):
+        raise ConfigurationError("Gebruik een geldig tijdstip (HH:MM) en tijdzone, bijvoorbeeld Europe/Amsterdam.") from None
+    return {"mode": value["mode"], "time": time, "timezone": zone}
+
+
+def next_poll(schedule, last, current):
+    """Return an aware UTC deadline; persistent attempts prevent restart loops."""
+    previous = datetime.fromisoformat(last).astimezone(timezone.utc) if last else None
+    if schedule["mode"] == "hourly":
+        return max(current, previous + timedelta(hours=1)) if previous else current
+    zone = ZoneInfo(schedule["timezone"])
+    local = current.astimezone(zone)
+    day = local.date()
+    if previous and previous.astimezone(zone).date() >= day:
+        day = previous.astimezone(zone).date() + timedelta(days=1)
+    hour, minute = map(int, schedule["time"].split(":"))
+    # fold=0 chooses the first occurrence in autumn; UTC normalization moves
+    # a nonexistent spring time forward by the DST gap.
+    candidate = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone, fold=0)
+    return max(current, candidate.astimezone(timezone.utc))
 
 
 class MediaError(ValueError):
@@ -146,6 +185,13 @@ class Monitor:
         self.wake = asyncio.Event()
         self.session = None
         self.stage = "configuratie controleren"
+        self.telegram_lock = asyncio.Lock()
+        self.telegram_test_lock = asyncio.Lock()
+        self.manual_refresh = False
+        saved = self.store.get("poll_schedule")
+        self.schedule = validate_schedule(json.loads(saved) if saved else config.get(
+            "polling", {"mode": "hourly", "time": "08:00", "timezone": "Europe/Amsterdam"}))
+        self.status["next_poll"] = None
 
     async def download(self, url, filename):
         target = self.store.root / filename
@@ -260,27 +306,57 @@ class Monitor:
                 raise ConfigurationError("Vul bij telegram.chat_id een numeriek chat-ID in, bijvoorbeeld -1001234567890.") from exc
         if cfg["config_entry_id"]:
             data["config_entry_id"] = cfg["config_entry_id"]
-        async with self.session.post("http://supervisor/core/api/services/telegram_bot/" + action,
-             headers={"Authorization": "Bearer " + token}, json=data,
-             timeout=aiohttp.ClientTimeout(total=timeout)) as response:
-            response.raise_for_status()
-            await response.read()
+        async with self.telegram_lock:
+            async with self.session.post("http://supervisor/core/api/services/telegram_bot/" + action,
+                 headers={"Authorization": "Bearer " + token}, json=data,
+                 timeout=aiohttp.ClientTimeout(total=timeout)) as response:
+                if response.status >= 400:
+                    # Inspect only a bounded error body; never show or log raw HA errors.
+                    body = (await response.content.read(8192)).decode("utf-8", errors="replace").lower()
+                    if "allowlist" in body or "not allowed" in body or "not permitted" in body:
+                        raise ConfigurationError(
+                            "Home Assistant weigert toegang tot de mediabestanden. Voeg "
+                            "/share/birdbuddy toe aan homeassistant.allowlist_external_dirs "
+                            "in configuration.yaml en herstart Home Assistant.")
+                    if "not found" in body and ("file" in body or "/share/" in body):
+                        raise ConfigurationError("Home Assistant kan het mediabestand niet vinden. Controleer of /share/birdbuddy toegankelijk is vanuit Home Assistant.")
+                response.raise_for_status()
+                await response.read()
+
+    def validate_telegram_media(self, media):
+        size = 0
+        for item in media:
+            path = self.store.root / item["file"]
+            if not path.is_file():
+                raise ConfigurationError("Een mediabestand ontbreekt. Controleer de lokale opslag.")
+            file_size = path.stat().st_size
+            if not item["video"] and file_size > 10 * 1024 * 1024:
+                raise ConfigurationError("Deze foto is groter dan 10 MiB. Verklein de foto voordat je die via Telegram verstuurt.")
+            size += file_size
+        if size > MAX_TELEGRAM_BATCH:
+            raise ConfigurationError("Deze verzending is groter dan 20 MiB. De test is gestopt om het geheugengebruik van Home Assistant te beperken. Download de media eerst via de webinterface.")
+
 
     async def telegram(self, card, media):
+        self.validate_telegram_media([media])
         await self.telegram_call("send_video" if media["video"] else "send_photo", {
             "file": str(self.store.root / media["file"]), "caption": card["title"],
             "parse_mode": "plain_text"})
 
     async def test_telegram(self):
+        if self.telegram_test_lock.locked():
+            raise ConfigurationError("Er loopt al een Telegram-test. Wacht tot die klaar is.")
+        async with self.telegram_test_lock:
+            return await self._test_telegram()
+
+    async def _test_telegram(self):
         if not self.config["telegram"]["enabled"]:
             raise ConfigurationError("Telegram staat uit. Zet telegram.enabled aan, sla op en herstart de add-on.")
         cards = self.store.cards()
         if not cards or not cards[0]["media"]:
             raise ConfigurationError("Er is nog geen opgeslagen waarneming met media. Haal eerst kaartjes op en probeer opnieuw.")
         card = cards[0]
-        for media in card["media"]:
-            if not (self.store.root / media["file"]).is_file():
-                raise ConfigurationError("Een mediabestand van de laatste waarneming ontbreekt. Controleer de lokale opslag.")
+        self.validate_telegram_media(card["media"])
         caption = (f"Bird Buddy-test · {card['title']}\nWaarneming: {card['created']}")[:1024]
         remaining = list(card["media"])
         batches = 0
@@ -310,6 +386,7 @@ class Monitor:
                 f"bestand(en) in {kind}. Controleer je Telegram-chat of kanaal.")
 
     async def deliver(self):
+        attempts = 0
         for card in self.store.cards():
             for row in self.store.db.execute(
                     "SELECT * FROM deliveries WHERE card=? AND done=0", (card["id"],)).fetchall():
@@ -323,6 +400,9 @@ class Monitor:
                     for index, media in enumerate(card["media"]):
                         if index < progress:
                             continue
+                        if attempts >= MAX_DELIVERIES_PER_CYCLE:
+                            return
+                        attempts += 1
                         if dest == "telegram":
                             await self.telegram(card, media)
                         else:
@@ -353,13 +433,25 @@ class Monitor:
             self.session = session
             while True:
                 self.wake.clear()
+                current = datetime.now(timezone.utc)
+                due = next_poll(self.schedule, self.store.get("last_scheduled_poll"), current)
+                self.status["next_poll"] = due.isoformat()
+                scheduled = False
+                if not self.manual_refresh:
+                    try:
+                        await asyncio.wait_for(self.wake.wait(), timeout=max(0, (due-current).total_seconds()))
+                    except asyncio.TimeoutError:
+                        scheduled = True
+                    if not scheduled and not self.manual_refresh:
+                        continue  # Settings changed: recalculate without cloud traffic.
+                self.manual_refresh = False
+                if scheduled:
+                    self.store.set("last_scheduled_poll", now())
+                self.status["next_poll"] = None
                 await self.check()
                 await self.deliver()
                 self.store.prune(self.config["keep_cards"])
-                try:
-                    await asyncio.wait_for(self.wake.wait(), timeout=self.config["poll_seconds"])
-                except asyncio.TimeoutError:
-                    pass
+
 
 
 async def lifecycle(app):
@@ -388,13 +480,27 @@ def make_app(monitor):
 
     async def state(request):
         deliveries = [dict(r) for r in monitor.store.db.execute("SELECT * FROM deliveries")]
-        return web.json_response(monitor.status | {"cards": monitor.store.cards(), "deliveries": deliveries})
+        return web.json_response(monitor.status | {"cards": monitor.store.cards(), "deliveries": deliveries, "polling": monitor.schedule})
 
     async def refresh(request):
         if request.headers.get("X-BirdBuddy-UI") != "1":
             raise web.HTTPForbidden()
+        monitor.manual_refresh = True
         monitor.wake.set()
         return web.json_response({"queued": True})
+
+    async def polling_settings(request):
+        if request.headers.get("X-BirdBuddy-UI") != "1":
+            raise web.HTTPForbidden()
+        try:
+            schedule = validate_schedule(await request.json())
+        except (ConfigurationError, ValueError) as exc:
+            message = str(exc) if isinstance(exc, ConfigurationError) else "Ongeldige instellingen."
+            return web.json_response({"ok": False, "message": message}, status=400)
+        monitor.store.set("poll_schedule", json.dumps(schedule))
+        monitor.schedule = schedule
+        monitor.wake.set()
+        return web.json_response({"ok": True, "message": "Planning opgeslagen.", "polling": schedule})
 
     async def telegram_test(request):
         if request.headers.get("X-BirdBuddy-UI") != "1":
@@ -433,6 +539,7 @@ def make_app(monitor):
     app.router.add_get("/", index)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/refresh", refresh)
+    app.router.add_post("/api/settings/polling", polling_settings)
     app.router.add_post("/api/telegram/test", telegram_test)
     app.router.add_get("/media/{name}", media)
     app.cleanup_ctx.append(lifecycle)
@@ -441,6 +548,7 @@ def make_app(monitor):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    LOG.info("Bird Buddy add-on 0.2.0 gestart (PID %d)", os.getpid())
     config = json.loads(Path("/data/options.json").read_text())
     store = Store("/share/birdbuddy")
     web.run_app(make_app(Monitor(config, store)), host="0.0.0.0", port=8099, access_log=None)

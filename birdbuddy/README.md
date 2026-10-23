@@ -25,11 +25,32 @@ stapel. Gebruik de pijlen om foto’s en video’s te bekijken en het huidige be
 te downloaden. Er staan maximaal vier waarnemingen op een pagina; onderaan
 blader je naar de vorige of volgende pagina.
 
-De standaardcontrole is elke 300 seconden. De add-on leest de laatste 7 dagen;
-`history_days` bepaalt de periode, `keep_cards` het aantal lokaal bewaarde
-kaartjes (standaard 100). Bij opstarten worden media naar `/share/birdbuddy`
-gedownload. Die map bevat ook de database; neem hem mee in je back-ups.
-Een recente periode is geen volledige import van je bestaande vogelcollecties.
+## Ophaalplanning
+
+Open **Instellingen · ophaalplanning** in de webinterface en kies **Elk uur**
+of **Eenmaal per dag**. Bij dagelijks kies je een lokaal tijdstip en tijdzone
+(standaard `Europe/Amsterdam`). Opslaan werkt zonder herstart en de keuze blijft
+bewaard in de lokale database. Een wijziging tijdens het ophalen geldt na die ronde.
+De planning geldt voor apparaatstatus en kaartjes, gevolgd door verzending.
+**Nu verversen** blijft handmatig beschikbaar en verschuift de planning niet.
+
+Elk uur is de standaard: een eerste controle bij de eerste start en daarna steeds
+60 minuten na de vorige geplande poging. Een herstart voert geen extra ronde uit
+als die nog niet aan de beurt is. Dagelijks wordt maximaal één geplande poging per
+lokale dag gedaan; een gemist tijdstip wordt bij starten eenmaal ingehaald.
+Ook een mislukte poging telt mee, zodat een storing geen herhaalde cloudcalls oplevert.
+Bij zomertijd schuift een niet-bestaand tijdstip vooruit; een dubbel tijdstip in het
+najaar wordt maar eenmaal uitgevoerd.
+
+De begininstellingen staan ook bij `polling` in de add-onconfiguratie. Een in de
+webinterface opgeslagen keuze heeft voorrang. `poll_seconds` is een verouderde
+optie en wordt vanaf 0.2.0 niet meer gebruikt. De webinterface leest de lokale status
+nog wel elke 15 seconden; dat veroorzaakt geen extra Bird Buddy-cloudverzoeken.
+
+De add-on leest de laatste 7 dagen; `history_days` bepaalt de periode, `keep_cards`
+het aantal lokaal bewaarde kaartjes (standaard 100). Media en de database staan in
+`/share/birdbuddy`; neem die map mee in je back-ups. Een recente periode is geen
+volledige import van je bestaande vogelcollecties.
 
 Nieuwe, ongeopende kaartjes moeten via `identify_postcard` worden geïdentificeerd
 om hun media te verkrijgen. Dit kan Bird Buddy's AI-identificatie starten en de
@@ -151,3 +172,8 @@ Het AppArmor-profiel kan op deze macOS-ontwikkelomgeving niet door de Linux-kern
 worden geladen of getest. Controle van dit profiel op de HA-host blijft nodig.
 Zie [Home Assistant: beveiliging](https://contributors.home-assistant.io/apps/guides/security/)
 en [berekening veiligheidsscore](https://contributors.home-assistant.io/apps/reference/security-rating/).
+
+Telegram-tests zijn begrensd tot 20 MiB totaal (foto’s maximaal 10 MiB per stuk).
+Te grote tests worden vóór verzending geweigerd. Automatisch worden maximaal vier
+mediabestanden per controleronde geprobeerd; de rest blijft in de wachtrij.
+Deze limieten beperken belasting, maar garanderen geen vrij geheugen op de HA-host.

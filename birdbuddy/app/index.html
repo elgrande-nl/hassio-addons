@@ -1,30 +1,32 @@
 <!doctype html>
 <html lang="nl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bird Buddy</title>
 <style>
-:root{font-family:system-ui,sans-serif;color-scheme:light;--background:#f2f3fa;--surface:#fff;--text:#202944;--muted:#58617a;--accent:#6040b8;--accent-hover:#4c2e9a;--coral:#c75460;--border:#dce0ee;--media:#e7e9f3;--error:#a42b49;--error-bg:#fff0f3;color:var(--text);background:var(--background)}
-body{max-width:1200px;margin:auto;padding:28px}
-header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-top:4px solid var(--accent);padding-top:16px}
-.actions{display:flex;flex-wrap:wrap;gap:10px}h1{margin-bottom:4px}button{font:inherit;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:12px;padding:12px 20px;cursor:pointer}button:hover{background:var(--accent-hover)}
-a:focus-visible,button:focus-visible{outline:3px solid var(--coral);outline-offset:4px}
-#feeders,.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:20px;margin:24px 0}
-.feeder,article{background:var(--surface);border:1px solid var(--border);border-radius:18px;overflow:hidden;box-shadow:0 4px 20px #20294409}
-.feeder{border-top:3px solid var(--coral)}.feeder,article .body{padding:20px}
-img,video{width:100%;max-height:400px;object-fit:contain;background:var(--media);display:block}
-.muted{color:var(--muted);font-size:.9rem}.error{color:var(--error);background:var(--error-bg);border-left:4px solid var(--error);border-radius:8px;padding:14px 18px;white-space:pre-wrap}
-a{color:var(--accent);text-underline-offset:3px}a:hover{color:var(--accent-hover)}h2{font-size:1.1rem}#error:empty{display:none}button:disabled{opacity:.45;cursor:default}
-.media-view img,.media-view video{height:260px;max-height:none}.media-nav,.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px}.media-nav button,.pagination button{padding:8px 14px}.media-nav{border-bottom:1px solid var(--border)}.media-count{font-size:.85rem;color:var(--muted)}.pagination{padding:12px 0;flex-wrap:wrap}.stack-label{color:var(--accent);font-size:.85rem;font-weight:600}.pagination[hidden]{display:none}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--background:#141827;--surface:#20263b;--text:#edf0ff;--muted:#b4bed7;--accent:#c4adff;--accent-hover:#dfd1ff;--coral:#f28e99;--border:#38415c;--media:#191e30;--error:#ffb1c4;--error-bg:#3b2233}button{color:#24183e}}
-@media(max-width:480px){body{padding:18px}header{align-items:flex-start;flex-wrap:wrap}}
+:root{font-family:system-ui,sans-serif;color-scheme:dark;--background:#171c1a;--surface:#222925;--text:#e1e5e2;--muted:#a9b3ad;--accent:#b1c4a6;--accent-hover:#cfdbc7;--border:#414b44;--media:#111613;--error:#edb8ac;--error-bg:#352923;color:var(--text);background:var(--background)}
+*{box-sizing:border-box}body{max-width:1120px;margin:auto;padding:32px 24px;line-height:1.5}
+header{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid #78847a;padding-bottom:24px;margin-bottom:20px}
+h1{font-size:1.75rem;font-weight:650;letter-spacing:-.04em;margin:0 0 4px}h2{font-size:1.05rem;font-weight:650;margin:0 0 12px}.actions{display:flex;flex-wrap:wrap;gap:8px}
+button,input,select{font:inherit;border:1px solid var(--border);border-radius:3px;padding:10px 14px}button{font-size:.875rem;font-weight:600;background:#394c3c;color:#e6eae7;cursor:pointer}button:hover{background:#48604c;border-color:#869b82}button:disabled{opacity:.4;cursor:default}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #c8d1cb;outline-offset:4px}
+#feeders,.cards{display:grid;gap:20px;margin:24px 0}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}#feeders{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.feeder,article{min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:4px;overflow:hidden}.feeder,.body{padding:20px}.feeder{border-left:3px solid #819576}.feeder p{margin:8px 0}
+img,video{width:100%;object-fit:contain;background:var(--media);display:block}.media-view img,.media-view video{height:280px}.media-nav,.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px}.media-nav{border-bottom:1px solid var(--border)}.media-nav button,.pagination button{padding:6px 12px}.media-count,.muted{color:var(--muted);font-size:.875rem}.pagination{padding:12px 0;flex-wrap:wrap}.pagination[hidden]{display:none}.stack-label{font-size:.75rem;color:#b5c0b7;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}
+a{color:var(--accent);text-underline-offset:4px}a:hover{color:var(--accent-hover)}.error{color:var(--error);background:var(--error-bg);border-left:3px solid #b77f70;padding:14px 18px;white-space:pre-wrap}#error:empty,#telegram-result:empty{display:none}
+details{border:1px solid var(--border);border-radius:4px;margin:24px 0;background:var(--surface)}summary{padding:16px 20px;cursor:pointer;font-weight:600;font-size:.9rem}form{border-top:1px solid var(--border);padding:20px}.settings-grid{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:16px}label{display:flex;flex-direction:column;gap:6px;font-size:.85rem;color:var(--muted)}input,select{color:var(--text);background:var(--background)}#settings-result{margin-bottom:0}
+@media(max-width:640px){body{padding:20px 16px}header{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:1fr}.media-view img,.media-view video{height:240px}.settings-grid label{width:100%}}
 </style>
-<header><div><h1>Bird Buddy</h1><div class="muted">Een kijkje bij je gevleugelde bezoekers</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Laatste waarneming testen</button></div></header>
+<header><div><h1>Bird Buddy</h1><div class="muted">Waarnemingen &amp; feederstatus</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Laatste waarneming testen</button></div></header>
 <p id="telegram-result" class="muted" role="status" aria-live="polite"></p>
-<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Foto’s en video’s zijn gebundeld per waarneming. Blader binnen een kaart of bekijk de volgende pagina met waarnemingen.</p><section id="cards" class="cards" aria-label="Waarnemingen"></section><nav id="pagination" class="pagination" aria-label="Pagina’s met waarnemingen" hidden><button id="page-prev">Vorige pagina</button><span id="page-info" class="muted" role="status" aria-live="polite"></span><button id="page-next">Volgende pagina</button></nav>
+<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><p id="next-poll" class="muted"></p>
+<details><summary>Instellingen · ophaalplanning</summary><form id="polling-form">
+<div class="settings-grid"><label>Kaartjes ophalen<select id="poll-mode"><option value="hourly">Elk uur</option><option value="daily">Eenmaal per dag</option></select></label><label id="daily-time-label">Dagelijks om<input id="poll-time" type="time" value="08:00" required></label><label>Tijdzone<input id="poll-timezone" value="Europe/Amsterdam" required></label></div>
+<p class="muted">De planning geldt voor status en kaartjes ophalen, gevolgd door verzending. Nu verversen blijft beschikbaar. Bij een gemiste dagtaak wordt eenmaal ingehaald.</p><button id="save-polling" type="submit">Planning opslaan</button><p id="settings-result" class="muted" role="status" aria-live="polite"></p>
+</form></details><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Foto’s en video’s zijn gebundeld per waarneming. Blader binnen een kaart of bekijk de volgende pagina met waarnemingen.</p><section id="cards" class="cards" aria-label="Waarnemingen"></section><nav id="pagination" class="pagination" aria-label="Pagina’s met waarnemingen" hidden><button id="page-prev">Vorige pagina</button><span id="page-info" class="muted" role="status" aria-live="polite"></span><button id="page-next">Volgende pagina</button></nav>
 <script>
 const $=id=>document.getElementById(id);
 function element(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el}
 const date=value=>value?new Date(value).toLocaleString('nl-NL'):'nog geen succesvolle controle';
 const pageSize=4;
-let rendering='',page=1,cards=[],deliveries=[];
+let rendering='',page=1,cards=[],deliveries=[],settingsLoaded=false;
 const mediaPositions=new Map();
 function renderCard(card){
     const article=element('article');
@@ -76,6 +78,8 @@ function changePage(delta){page+=delta;renderCards();$('cards').scrollIntoView({
 $('page-prev').onclick=()=>changePage(-1);
 $('page-next').onclick=()=>changePage(1);
 async function load(){try{const response=await fetch('api/state',{cache:'no-store'});if(!response.ok)throw Error('Status niet beschikbaar ('+response.status+')');const data=await response.json();$('updated').textContent='Laatste controle: '+date(data.last_success);$('error').textContent=data.error||'';
+$('next-poll').textContent=data.next_poll?'Volgende geplande controle: '+date(data.next_poll):'Controle wordt uitgevoerd of ingepland…';
+if(!settingsLoaded&&data.polling){$('poll-mode').value=data.polling.mode;$('poll-time').value=data.polling.time;$('poll-timezone').value=data.polling.timezone;updateScheduleForm();settingsLoaded=true}
 $('feeders').replaceChildren(...data.feeders.map(f=>{const box=element('div',undefined,'feeder');box.append(element('h2',f.name),element('p',f.state),element('p','Batterij: '+(f.battery??'onbekend')+(f.battery!=null?'%':'')+(f.charging?' · laden':'')),element('p','Wifi: '+(f.signal??'onbekend')+' · Firmware: '+(f.firmware??'onbekend'),'muted'));return box}));
 const signature=JSON.stringify([data.cards,data.deliveries]);if(signature===rendering)return;
 // Keep the first visible sighting on screen when new sightings arrive.
@@ -93,5 +97,8 @@ try{const response=await fetch('api/telegram/test',{method:'POST',headers:{'X-Bi
 catch(e){result.className='error';result.textContent='Geen bevestiging ontvangen. Controleer eerst je Telegram-chat voordat je opnieuw test.'}
 finally{button.disabled=false;button.textContent='Laatste waarneming testen'}
 };
-load();setInterval(load,15000);
+function updateScheduleForm(){$('poll-time').disabled=$('poll-mode').value!=='daily';$('daily-time-label').style.opacity=$('poll-mode').value==='daily'?'1':'.5'}
+$('poll-mode').onchange=updateScheduleForm;
+$('polling-form').onsubmit=async event=>{event.preventDefault();const button=$('save-polling'),result=$('settings-result');button.disabled=true;result.className='muted';result.textContent='Opslaan…';try{const response=await fetch('api/settings/polling',{method:'POST',headers:{'Content-Type':'application/json','X-BirdBuddy-UI':'1'},body:JSON.stringify({mode:$('poll-mode').value,time:$('poll-time').value,timezone:$('poll-timezone').value})});const data=await response.json();result.textContent=data.message;if(!response.ok)result.className='error';else await load()}catch(e){result.className='error';result.textContent='Instellingen konden niet worden opgeslagen.'}finally{button.disabled=false}};
+updateScheduleForm();load();setInterval(load,15000);
 </script></html>

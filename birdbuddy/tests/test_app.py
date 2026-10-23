@@ -4,10 +4,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from app import Monitor, Store, MediaError, ConfigurationError, make_app
+from app import Monitor, Store, MediaError, ConfigurationError, make_app, validate_schedule, next_poll
 import aiohttp
 from aiohttp import web
 from birdbuddy.feed import FeedNode
@@ -30,6 +31,37 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(store.db.execute('SELECT id FROM seen').fetchone()[0], 'c')
             self.assertFalse((Path(tmp) / 'bird.jpg').exists())
             store.db.close()
+
+
+class ScheduleTests(unittest.TestCase):
+    def test_hourly_uses_previous_attempt_after_restart(self):
+        config = validate_schedule({'mode': 'hourly', 'time': '08:00', 'timezone': 'Europe/Amsterdam'})
+        current = datetime(2026, 10, 23, 12, 30, tzinfo=timezone.utc)
+        self.assertEqual(next_poll(config, '2026-10-23T12:00:00+00:00', current).hour, 13)
+        self.assertEqual(next_poll(config, None, current), current)
+
+    def test_daily_timezone_missed_run_and_no_second_run(self):
+        config = validate_schedule({'mode': 'daily', 'time': '08:00', 'timezone': 'Europe/Amsterdam'})
+        current = datetime(2026, 10, 23, 5, tzinfo=timezone.utc)
+        self.assertEqual(next_poll(config, None, current).hour, 6)
+        missed = current.replace(hour=9)
+        self.assertEqual(next_poll(config, None, missed), missed)
+        self.assertEqual(next_poll(config, '2026-10-23T06:00:00+00:00', missed).day, 24)
+
+    def test_dst_spring_gap_and_autumn_repeat(self):
+        config = validate_schedule({'mode': 'daily', 'time': '02:30', 'timezone': 'Europe/Amsterdam'})
+        spring = datetime(2026, 3, 29, 0, tzinfo=timezone.utc)
+        self.assertEqual(next_poll(config, None, spring), spring.replace(hour=1, minute=30))
+        autumn = datetime(2026, 10, 25, 1, 15, tzinfo=timezone.utc)
+        following = next_poll(config, '2026-10-25T00:30:00+00:00', autumn)
+        self.assertEqual(following.day, 26)
+        self.assertEqual(following.hour, 1)
+
+    def test_invalid_settings_are_rejected(self):
+        for value in ({'mode': 'other'}, {'mode': 'daily', 'time': '25:01'},
+                      {'mode': 'daily', 'timezone': 'invalid'}, []):
+            with self.assertRaises(ConfigurationError):
+                validate_schedule(value)
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
@@ -80,6 +112,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                        'media': [{'file': 'bird.jpg', 'video': False},
                                  {'file': 'bird.mp4', 'video': True}]}, {})
             response = MagicMock()
+            response.status = 200
             response.read = AsyncMock()
             context = MagicMock()
             context.__aenter__ = AsyncMock(return_value=response)
@@ -163,6 +196,76 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             monitor.test_telegram.side_effect = ConfigurationError('Telegram staat uit')
             response = await route.handler(request)
             self.assertEqual(response.status, 400)
+            store.db.close()
+
+    async def test_oversized_test_is_rejected_before_home_assistant_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': '', 'telegram': {'enabled': True}}, store)
+            path = Path(tmp) / 'large.mp4'
+            with path.open('wb') as output:
+                output.truncate(21 * 1024 * 1024)
+            store.add({'id': 'new', 'title': 'Vogel', 'created': '2026-10-23',
+                       'media': [{'file': path.name, 'video': True}]}, {})
+            monitor.telegram_call = AsyncMock()
+            with self.assertRaisesRegex(ConfigurationError, '20 MiB'):
+                await monitor.test_telegram()
+            monitor.telegram_call.assert_not_awaited()
+            async with monitor.telegram_test_lock:
+                with self.assertRaisesRegex(ConfigurationError, 'al een Telegram-test'):
+                    await monitor.test_telegram()
+            store.db.close()
+
+    async def test_delivery_cycle_is_bounded_and_resumes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': '', 'telegram': {'enabled': True},
+                               'sftp': {'enabled': False}}, store)
+            for index in range(6):
+                store.add({'id': str(index), 'title': 'Vogel', 'created': str(index),
+                           'media': [{'file': 'bird.jpg', 'video': False}]}, {'telegram': False})
+            monitor.telegram = AsyncMock()
+            await monitor.deliver()
+            self.assertEqual(monitor.telegram.await_count, 4)
+            await monitor.deliver()
+            self.assertEqual(monitor.telegram.await_count, 6)
+            store.db.close()
+
+    async def test_allowlist_error_becomes_actionable_without_raw_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': '', 'telegram': {
+                'chat_id': '-1001234', 'config_entry_id': ''}}, store)
+            response = MagicMock(status=400)
+            response.content.read = AsyncMock(return_value=b'allowlist_external_dirs_error secret-token')
+            context = MagicMock()
+            context.__aenter__ = AsyncMock(return_value=response)
+            context.__aexit__ = AsyncMock(return_value=False)
+            monitor.session = MagicMock(closed=False)
+            monitor.session.post.return_value = context
+            with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-token'}):
+                with self.assertRaisesRegex(ConfigurationError, 'configuration.yaml') as caught:
+                    await monitor.telegram_call('send_media_group', {})
+            self.assertNotIn('secret-token', str(caught.exception))
+            store.db.close()
+
+    async def test_schedule_save_survives_restart_without_polling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': ''}, store)
+            app = make_app(monitor)
+            route = next(r for r in app.router.routes() if r.resource.canonical == '/api/settings/polling')
+            settings = {'mode': 'daily', 'time': '18:30', 'timezone': 'Europe/Amsterdam'}
+            request = MagicMock(headers={'X-BirdBuddy-UI': '1'})
+            request.json = AsyncMock(return_value=settings)
+            response = await route.handler(request)
+            self.assertEqual(response.status, 200)
+            self.assertFalse(monitor.manual_refresh)
+            self.assertTrue(monitor.wake.is_set())
+            self.assertEqual(Monitor({'email': '', 'password': ''}, store).schedule, settings)
+            request.headers = {}
+            with self.assertRaises(web.HTTPForbidden):
+                await route.handler(request)
             store.db.close()
 
     async def test_missing_credentials_gives_actionable_message(self):

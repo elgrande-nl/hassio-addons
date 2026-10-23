@@ -43,6 +43,7 @@ profile birdbuddy flags=(attach_disconnected,mediate_deleted) {
   /etc/ssl/** r,
   /etc/ssh/ r,
   /etc/ssh/** r,
+  /usr/share/zoneinfo/ r,
   /usr/share/zoneinfo/** r,
   /sys/devices/system/cpu/online r,
 
