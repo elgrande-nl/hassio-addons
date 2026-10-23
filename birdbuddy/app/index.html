@@ -16,7 +16,7 @@ a{color:var(--accent);text-underline-offset:3px}a:hover{color:var(--accent-hover
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--background:#141827;--surface:#20263b;--text:#edf0ff;--muted:#b4bed7;--accent:#c4adff;--accent-hover:#dfd1ff;--coral:#f28e99;--border:#38415c;--media:#191e30;--error:#ffb1c4;--error-bg:#3b2233}button{color:#24183e}}
 @media(max-width:480px){body{padding:18px}header{align-items:flex-start;flex-wrap:wrap}}
 </style>
-<header><div><h1>Bird Buddy</h1><div class="muted">Een kijkje bij je gevleugelde bezoekers</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Telegram testen</button></div></header>
+<header><div><h1>Bird Buddy</h1><div class="muted">Een kijkje bij je gevleugelde bezoekers</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Laatste waarneming testen</button></div></header>
 <p id="telegram-result" class="muted" role="status" aria-live="polite"></p>
 <p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Foto’s en video’s zijn gebundeld per waarneming. Blader binnen een kaart of bekijk de volgende pagina met waarnemingen.</p><section id="cards" class="cards" aria-label="Waarnemingen"></section><nav id="pagination" class="pagination" aria-label="Pagina’s met waarnemingen" hidden><button id="page-prev">Vorige pagina</button><span id="page-info" class="muted" role="status" aria-live="polite"></span><button id="page-next">Volgende pagina</button></nav>
 <script>
@@ -88,10 +88,10 @@ renderCards();
 }catch(err){$('error').textContent=err.message}}
 $('refresh').onclick=async()=>{const b=$('refresh');b.disabled=true;try{const r=await fetch('api/refresh',{method:'POST',headers:{'X-BirdBuddy-UI':'1'}});if(!r.ok)throw Error('Verversen mislukt');$('updated').textContent='Controle aangevraagd…'}catch(e){$('error').textContent=e.message}finally{b.disabled=false}};
 $('telegram-test').onclick=async()=>{
-const button=$('telegram-test'),result=$('telegram-result');button.disabled=true;button.textContent='Test versturen…';result.className='muted';result.textContent='Testbericht wordt verstuurd…';
+const button=$('telegram-test'),result=$('telegram-result');button.disabled=true;button.textContent='Test versturen…';result.className='muted';result.textContent='Laatste waarneming met foto’s en video’s wordt verstuurd…';
 try{const response=await fetch('api/telegram/test',{method:'POST',headers:{'X-BirdBuddy-UI':'1'}});const data=await response.json();result.textContent=data.message;if(!response.ok||!data.ok)result.className='error'}
 catch(e){result.className='error';result.textContent='Geen bevestiging ontvangen. Controleer eerst je Telegram-chat voordat je opnieuw test.'}
-finally{button.disabled=false;button.textContent='Telegram testen'}
+finally{button.disabled=false;button.textContent='Laatste waarneming testen'}
 };
 load();setInterval(load,15000);
 </script></html>

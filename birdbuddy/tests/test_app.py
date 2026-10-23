@@ -74,6 +74,11 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             store = Store(tmp)
             monitor = Monitor({'email': '', 'password': '', 'telegram': {
                 'enabled': True, 'chat_id': '-1001234', 'config_entry_id': 'entry'}}, store)
+            for name in ('bird.jpg', 'bird.mp4'):
+                (Path(tmp) / name).write_bytes(b'media')
+            store.add({'id': 'latest', 'title': 'Koolmees', 'created': '2026-10-23',
+                       'media': [{'file': 'bird.jpg', 'video': False},
+                                 {'file': 'bird.mp4', 'video': True}]}, {})
             response = MagicMock()
             response.read = AsyncMock()
             context = MagicMock()
@@ -84,10 +89,13 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-token'}):
                 await monitor.test_telegram()
             args, kwargs = monitor.session.post.call_args
-            self.assertTrue(args[0].endswith('/telegram_bot/send_message'))
+            self.assertTrue(args[0].endswith('/telegram_bot/send_media_group'))
             self.assertEqual(kwargs['json']['chat_id'], [-1001234])
             self.assertEqual(kwargs['json']['config_entry_id'], 'entry')
-            self.assertIn('testbericht', kwargs['json']['message'])
+            self.assertEqual([m['media_type'] for m in kwargs['json']['media']], ['photo', 'video'])
+            self.assertIn('Koolmees', kwargs['json']['media'][0]['caption'])
+            self.assertTrue(kwargs['json']['media'][0]['file'].endswith('/bird.jpg'))
+            self.assertEqual(store.db.execute('SELECT COUNT(*) FROM deliveries').fetchone()[0], 0)
             monitor.config['telegram']['enabled'] = False
             with self.assertRaises(ConfigurationError):
                 await monitor.test_telegram()
@@ -100,6 +108,37 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(monitor.session.post.call_count, 1)
             store.db.close()
 
+    async def test_telegram_latest_sighting_album_limits_and_single_media(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': '', 'telegram': {'enabled': True}}, store)
+            monitor.telegram_call = AsyncMock()
+            with self.assertRaises(ConfigurationError):
+                await monitor.test_telegram()
+            monitor.telegram_call.assert_not_awaited()
+            store.add({'id': 'old', 'title': 'Oud', 'created': '2026-10-20',
+                       'media': [{'file': 'old.jpg', 'video': False}]}, {})
+            items = [{'file': str(i)+'.jpg', 'video': False} for i in range(11)]
+            for item in items:
+                (Path(tmp) / item['file']).write_bytes(b'photo')
+            store.add({'id': 'new', 'title': 'Nieuw', 'created': '2026-10-23', 'media': items}, {})
+            result = await monitor.test_telegram()
+            self.assertIn('Nieuw', result)
+            self.assertEqual([len(c.args[1]['media']) for c in monitor.telegram_call.call_args_list], [9, 2])
+            sent = [m['file'] for c in monitor.telegram_call.call_args_list for m in c.args[1]['media']]
+            self.assertEqual(len(set(sent)), 11)
+            monitor.telegram_call.reset_mock()
+            with store.db:
+                store.db.execute('UPDATE cards SET media=? WHERE id=?', (json.dumps(items[:1]), 'new'))
+            await monitor.test_telegram()
+            self.assertEqual(monitor.telegram_call.call_args.args[0], 'send_photo')
+            (Path(tmp) / items[0]['file']).unlink()
+            monitor.telegram_call.reset_mock()
+            with self.assertRaises(ConfigurationError):
+                await monitor.test_telegram()
+            monitor.telegram_call.assert_not_awaited()
+            store.db.close()
+
     async def test_telegram_endpoint_reports_errors_and_requires_ui_header(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
@@ -108,7 +147,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             route = next(r for r in app.router.routes()
                          if r.resource.canonical == '/api/telegram/test')
             request = MagicMock(headers={})
-            monitor.test_telegram = AsyncMock()
+            monitor.test_telegram = AsyncMock(return_value='Laatste waarneming verstuurd')
             with self.assertRaises(web.HTTPForbidden):
                 await route.handler(request)
             monitor.test_telegram.assert_not_awaited()

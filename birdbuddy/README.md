@@ -64,11 +64,15 @@ kaartjes te versturen. Kaartjes die al lokaal aanwezig waren vóór het inschake
 van een bestemming worden niet achteraf toegevoegd aan de verzendwachtrij.
 Foto's en video's worden afzonderlijk verzonden met de vogelnaam als bijschrift.
 
-Gebruik **Telegram testen** bovenaan de webinterface om één tekstbericht te sturen
-naar dezelfde ingestelde bestemming. Deze test werkt ook als Bird Buddy nog geen
-kaartjes kan ophalen. De uitkomst verschijnt onder de knoppen. Dit test tekst;
-voor foto's en video's blijft `allowlist_external_dirs` nodig. Bij een time-out
-kan het bericht toch zijn aangekomen: controleer Telegram voordat je opnieuw klikt.
+Gebruik **Laatste waarneming testen** bovenaan de webinterface om de nieuwste
+lokaal opgeslagen waarneming met alle media te sturen. Vogelnaam en datum staan
+in het bijschrift. Meerdere foto's/video's worden als Telegram-album verstuurd
+(maximaal tien per album); bij meer bestanden volgen meerdere albums, één bestand
+gaat als losse foto/video. Dit vereist ook toegang tot `/share/birdbuddy` via
+`allowlist_external_dirs`. Zonder opgeslagen media toont de knop een uitleg.
+De test haalt geen nieuwe kaartjes op en verandert de automatische verzendwachtrij
+niet: je kunt dezelfde waarneming bewust opnieuw testen. Bij een fout kan een deel
+al zijn aangekomen; controleer Telegram voordat je opnieuw klikt.
 
 ## SFTP (optioneel, kan tegelijk met Telegram)
 

@@ -1,3 +1,9 @@
+# 0.1.8
+
+- Telegram-test verstuurt de nieuwste lokaal opgeslagen waarneming met alle foto’s en video’s.
+- Meerdere bestanden worden gebundeld in albums van maximaal tien items; één bestand wordt los verstuurd.
+- Duidelijke melding wanneer er nog geen media zijn of een lokaal bestand ontbreekt.
+
 # 0.1.7
 
 - Vier waarnemingen per pagina.

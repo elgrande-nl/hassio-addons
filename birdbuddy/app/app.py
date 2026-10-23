@@ -246,7 +246,7 @@ class Monitor:
             + ". Volgende controle opnieuw proberen."
         ) if errors else None
 
-    async def telegram_call(self, action, data):
+    async def telegram_call(self, action, data, timeout=30):
         cfg = self.config["telegram"]
         token = os.environ.get("SUPERVISOR_TOKEN")
         if not token:
@@ -262,7 +262,7 @@ class Monitor:
             data["config_entry_id"] = cfg["config_entry_id"]
         async with self.session.post("http://supervisor/core/api/services/telegram_bot/" + action,
              headers={"Authorization": "Bearer " + token}, json=data,
-             timeout=aiohttp.ClientTimeout(total=30)) as response:
+             timeout=aiohttp.ClientTimeout(total=timeout)) as response:
             response.raise_for_status()
             await response.read()
 
@@ -274,9 +274,40 @@ class Monitor:
     async def test_telegram(self):
         if not self.config["telegram"]["enabled"]:
             raise ConfigurationError("Telegram staat uit. Zet telegram.enabled aan, sla op en herstart de add-on.")
-        await self.telegram_call("send_message", {
-            "message": "Bird Buddy: dit is een testbericht vanuit je Home Assistant-add-on.",
-            "parse_mode": "plain_text"})
+        cards = self.store.cards()
+        if not cards or not cards[0]["media"]:
+            raise ConfigurationError("Er is nog geen opgeslagen waarneming met media. Haal eerst kaartjes op en probeer opnieuw.")
+        card = cards[0]
+        for media in card["media"]:
+            if not (self.store.root / media["file"]).is_file():
+                raise ConfigurationError("Een mediabestand van de laatste waarneming ontbreekt. Controleer de lokale opslag.")
+        caption = (f"Bird Buddy-test · {card['title']}\nWaarneming: {card['created']}")[:1024]
+        remaining = list(card["media"])
+        batches = 0
+        try:
+            while remaining:
+                # Telegram albums contain 2–10 items. Avoid a lone final item.
+                size = 9 if len(remaining) == 11 else min(10, len(remaining))
+                batch, remaining = remaining[:size], remaining[size:]
+                if len(batch) == 1:
+                    media = batch[0]
+                    await self.telegram_call("send_video" if media["video"] else "send_photo", {
+                        "file": str(self.store.root / media["file"]), "caption": caption,
+                        "parse_mode": "plain_text"}, timeout=120)
+                else:
+                    items = [{"media_type": "video" if m["video"] else "photo",
+                              "file": str(self.store.root / m["file"])} for m in batch]
+                    items[0]["caption"] = caption
+                    await self.telegram_call("send_media_group", {
+                        "media": items, "parse_mode": "plain_text"}, timeout=120)
+                batches += 1
+        except Exception:
+            if batches:
+                LOG.warning("Telegram-test gedeeltelijk verstuurd: %d groep(en). Controleer Telegram voordat je opnieuw test.", batches)
+            raise
+        kind = "bericht" if len(card["media"]) == 1 else f"{batches} album(s)"
+        return (f"Laatste waarneming verstuurd: {card['title']} — {len(card['media'])} "
+                f"bestand(en) in {kind}. Controleer je Telegram-chat of kanaal.")
 
     async def deliver(self):
         for card in self.store.cards():
@@ -369,18 +400,19 @@ def make_app(monitor):
         if request.headers.get("X-BirdBuddy-UI") != "1":
             raise web.HTTPForbidden()
         try:
-            await monitor.test_telegram()
+            result = await monitor.test_telegram()
         except ConfigurationError as exc:
             return web.json_response({"ok": False, "message": str(exc)}, status=400)
         except aiohttp.ClientResponseError as exc:
             hints = {
-                400: "Controleer het chat-ID, de toegestane chats en eventueel het config-entry-ID.",
+                400: "Controleer het chat-ID, de toegestane chats, het config-entry-ID en allowlist_external_dirs voor /share/birdbuddy.",
                 401: "Controleer de Home Assistant API-toegang en Telegram-integratie.",
                 403: "Controleer de rechten van de bot en de toegestane chats.",
                 404: "Controleer of de Telegram bot-integratie in Home Assistant geladen is.",
             }
             message = (f"Home Assistant weigert de Telegram-test (HTTP {exc.status}). "
                        + hints.get(exc.status, "Controleer de Telegram-integratie en Home Assistant-logboeken."))
+            message += " Mogelijk is een deel al verstuurd; controleer Telegram voordat je opnieuw test."
             return web.json_response({"ok": False, "message": message}, status=502)
         except (asyncio.TimeoutError, aiohttp.ClientConnectionError):
             return web.json_response({"ok": False, "message":
@@ -389,8 +421,7 @@ def make_app(monitor):
             LOG.warning("Telegram-test mislukt (%s) | %s", type(exc).__name__, error_location(exc))
             return web.json_response({"ok": False, "message":
                 "Telegram-test mislukt. Controleer de Home Assistant-logboeken."}, status=502)
-        return web.json_response({"ok": True, "message":
-            "Testbericht verstuurd via Home Assistant. Controleer je ingestelde Telegram-chat of kanaal. Dit test alleen tekst; foto’s vereisen ook toegang tot /share/birdbuddy."})
+        return web.json_response({"ok": True, "message": result})
 
     async def media(request):
         name = request.match_info["name"]
