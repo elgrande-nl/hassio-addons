@@ -14,12 +14,12 @@ a{color:var(--accent);text-underline-offset:4px}a:hover{color:var(--accent-hover
 details{border:1px solid var(--border);border-radius:4px;margin:24px 0;background:var(--surface)}summary{padding:16px 20px;cursor:pointer;font-weight:600;font-size:.9rem}form{border-top:1px solid var(--border);padding:20px}.settings-grid{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:16px}label{display:flex;flex-direction:column;gap:6px;font-size:.85rem;color:var(--muted)}input,select{color:var(--text);background:var(--background)}#settings-result{margin-bottom:0}
 @media(max-width:640px){body{padding:20px 16px}header{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:1fr}.media-view img,.media-view video{height:240px}.settings-grid label{width:100%}}
 </style>
-<header><div><h1>Bird Buddy</h1><div class="muted">Waarnemingen &amp; feederstatus</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Laatste waarneming testen</button></div></header>
+<header><div><h1>Bird Buddy</h1><div class="muted">Waarnemingen &amp; feederstatus</div></div><div class="actions"><button id="refresh">Kaartjes verversen</button> <button id="telegram-test">Laatste waarneming testen</button></div></header>
 <p id="telegram-result" class="muted" role="status" aria-live="polite"></p>
-<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><p id="next-poll" class="muted"></p>
-<details><summary>Instellingen · ophaalplanning</summary><form id="polling-form">
+<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><p id="next-poll" class="muted"></p><p id="status-age" class="muted"></p><p id="status-error" class="error" role="status" hidden></p>
+<details><summary>Instellingen · kaartjes ophalen</summary><form id="polling-form">
 <div class="settings-grid"><label>Kaartjes ophalen<select id="poll-mode"><option value="hourly">Elk uur</option><option value="daily">Eenmaal per dag</option></select></label><label id="daily-time-label">Dagelijks om<input id="poll-time" type="time" value="08:00" required></label><label>Tijdzone<input id="poll-timezone" value="Europe/Amsterdam" required></label></div>
-<p class="muted">De planning geldt voor status en kaartjes ophalen, gevolgd door verzending. Nu verversen blijft beschikbaar. Bij een gemiste dagtaak wordt eenmaal ingehaald.</p><button id="save-polling" type="submit">Planning opslaan</button><p id="settings-result" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">Deze planning geldt alleen voor kaartjes en verzending. Accu en apparaatstatus worden maximaal eenmaal per 24 uur opgehaald. Kaartjes verversen blijft beschikbaar. Bij een gemiste dagtaak wordt eenmaal ingehaald.</p><button id="save-polling" type="submit">Planning opslaan</button><p id="settings-result" class="muted" role="status" aria-live="polite"></p>
 </form></details><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Foto’s en video’s zijn gebundeld per waarneming. Blader binnen een kaart of bekijk de volgende pagina met waarnemingen.</p><section id="cards" class="cards" aria-label="Waarnemingen"></section><nav id="pagination" class="pagination" aria-label="Pagina’s met waarnemingen" hidden><button id="page-prev">Vorige pagina</button><span id="page-info" class="muted" role="status" aria-live="polite"></span><button id="page-next">Volgende pagina</button></nav>
 <script>
 const $=id=>document.getElementById(id);
@@ -78,7 +78,9 @@ function changePage(delta){page+=delta;renderCards();$('cards').scrollIntoView({
 $('page-prev').onclick=()=>changePage(-1);
 $('page-next').onclick=()=>changePage(1);
 async function load(){try{const response=await fetch('api/state',{cache:'no-store'});if(!response.ok)throw Error('Status niet beschikbaar ('+response.status+')');const data=await response.json();$('updated').textContent='Laatste controle: '+date(data.last_success);$('error').textContent=data.error||'';
-$('next-poll').textContent=data.next_poll?'Volgende geplande controle: '+date(data.next_poll):'Controle wordt uitgevoerd of ingepland…';
+$('next-poll').textContent=data.next_poll?'Volgende kaartjescontrole: '+date(data.next_poll):'Kaartjescontrole wordt uitgevoerd of ingepland…';
+$('status-age').textContent='Accu-/apparaatstatus: '+date(data.status_updated)+(data.next_status_poll?' · Volgende statuscontrole: '+date(data.next_status_poll):'')+' · maximaal 1× per 24 uur';
+$('status-error').hidden=!data.status_error;$('status-error').textContent=data.status_error||'';
 if(!settingsLoaded&&data.polling){$('poll-mode').value=data.polling.mode;$('poll-time').value=data.polling.time;$('poll-timezone').value=data.polling.timezone;updateScheduleForm();settingsLoaded=true}
 $('feeders').replaceChildren(...data.feeders.map(f=>{const box=element('div',undefined,'feeder');box.append(element('h2',f.name),element('p',f.state),element('p','Batterij: '+(f.battery??'onbekend')+(f.battery!=null?'%':'')+(f.charging?' · laden':'')),element('p','Wifi: '+(f.signal??'onbekend')+' · Firmware: '+(f.firmware??'onbekend'),'muted'));return box}));
 const signature=JSON.stringify([data.cards,data.deliveries]);if(signature===rendering)return;

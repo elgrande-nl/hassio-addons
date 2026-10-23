@@ -181,7 +181,10 @@ class Monitor:
         self.config, self.store = config, store
         self.bb = BirdBuddy(config["email"], config["password"])
         self.bb.language_code = "nl"
-        self.status = {"last_success": None, "error": None, "feeders": []}
+        cached = json.loads(self.store.get("feeder_snapshot") or "{}")
+        self.status = {"last_success": None, "error": None,
+                       "feeders": cached.get("feeders", []),
+                       "status_updated": cached.get("updated"), "status_error": None}
         self.wake = asyncio.Event()
         self.session = None
         self.stage = "configuratie controleren"
@@ -225,19 +228,43 @@ class Monitor:
         finally:
             temporary.unlink(missing_ok=True)
 
-    async def sync(self):
+    def status_deadline(self, current):
+        last = self.store.get("last_status_attempt")
+        return datetime.fromisoformat(last) + timedelta(hours=24) if last else current
+
+    async def refresh_status_if_due(self):
+        current = datetime.now(timezone.utc)
+        if self.status_deadline(current) > current:
+            return
+        # Record before the request: even a failure/restart cannot hammer status.
+        self.store.set("last_status_attempt", current.isoformat())
+        self.stage = "dagelijkse apparaatstatus ophalen"
+        try:
+            await asyncio.wait_for(self.bb.refresh(), timeout=60)
+            feeders = [
+                {"name": f.name, "state": f.state.value, "battery": f.battery.get("percentage"),
+                 "charging": f.battery.get("charging"), "signal": f.signal.get("rssi"),
+                 "firmware": f.version} for f in self.bb.feeders.values()]
+            updated = now()
+            self.store.set("feeder_snapshot", json.dumps({"feeders": feeders, "updated": updated}))
+            self.status.update(feeders=feeders, status_updated=updated, status_error=None)
+        except Exception as exc:
+            self.status["status_error"] = sync_error(exc, self.stage)
+            LOG.warning("%s | %s", self.status["status_error"], error_location(exc))
+        # Status failure must not prevent reading already captured cloud media.
+
+    async def sync(self, include_cards=True):
         self.stage = "configuratie controleren"
         if not str(self.config.get("email") or "").strip() or not self.config.get("password"):
+            current = datetime.now(timezone.utc)
+            if self.status_deadline(current) <= current:
+                self.store.set("last_status_attempt", current.isoformat())
             raise ConfigurationError(
                 "Bird Buddy-inloggegevens ontbreken. Vul email en password in bij "
                 "de add-onconfiguratie, sla op en herstart de add-on.")
-        self.stage = "aanmelden en apparaatstatus ophalen"
-        await self.bb.refresh()
-        self.stage = "apparaatstatus verwerken"
-        self.status["feeders"] = [
-            {"name": f.name, "state": f.state.value, "battery": f.battery.get("percentage"),
-             "charging": f.battery.get("charging"), "signal": f.signal.get("rssi"),
-             "firmware": f.version} for f in self.bb.feeders.values()]
+        await self.refresh_status_if_due()
+        if not include_cards:
+            return
         since = datetime.now(timezone.utc) - timedelta(days=self.config["history_days"])
         self.stage = "recente kaartjes ophalen"
         cards = await self.bb.refresh_feed(since=since)
@@ -419,9 +446,9 @@ class Monitor:
                                               (type(exc).__name__, card["id"], dest))
                     LOG.warning("%s verzending mislukt (%s)", dest, type(exc).__name__)
 
-    async def check(self):
+    async def check(self, include_cards=True):
         try:
-            await asyncio.wait_for(self.sync(), timeout=240)
+            await asyncio.wait_for(self.sync(include_cards=include_cards), timeout=240)
         except Exception as exc:
             self.status["error"] = sync_error(exc, self.stage)
             # Include code locations, but never upstream exception text or locals.
@@ -434,8 +461,11 @@ class Monitor:
             while True:
                 self.wake.clear()
                 current = datetime.now(timezone.utc)
-                due = next_poll(self.schedule, self.store.get("last_scheduled_poll"), current)
-                self.status["next_poll"] = due.isoformat()
+                card_due = next_poll(self.schedule, self.store.get("last_scheduled_poll"), current)
+                status_due = self.status_deadline(current)
+                due = min(card_due, status_due)
+                self.status["next_poll"] = card_due.isoformat()
+                self.status["next_status_poll"] = max(current, status_due).isoformat()
                 scheduled = False
                 if not self.manual_refresh:
                     try:
@@ -444,11 +474,13 @@ class Monitor:
                         scheduled = True
                     if not scheduled and not self.manual_refresh:
                         continue  # Settings changed: recalculate without cloud traffic.
+                include_cards = self.manual_refresh or (scheduled and card_due <= datetime.now(timezone.utc))
                 self.manual_refresh = False
-                if scheduled:
+                if scheduled and include_cards:
                     self.store.set("last_scheduled_poll", now())
-                self.status["next_poll"] = None
-                await self.check()
+                if include_cards:
+                    self.status["next_poll"] = None
+                await self.check(include_cards=include_cards)
                 await self.deliver()
                 self.store.prune(self.config["keep_cards"])
 
@@ -548,7 +580,7 @@ def make_app(monitor):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    LOG.info("Bird Buddy add-on 0.2.0 gestart (PID %d)", os.getpid())
+    LOG.info("Bird Buddy add-on 0.2.1 gestart (PID %d)", os.getpid())
     config = json.loads(Path("/data/options.json").read_text())
     store = Store("/share/birdbuddy")
     web.run_app(make_app(Monitor(config, store)), host="0.0.0.0", port=8099, access_log=None)

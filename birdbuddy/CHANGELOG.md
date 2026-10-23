@@ -1,3 +1,9 @@
+# 0.2.1
+
+- Splits apparaatstatus en kaartjes: maximaal één expliciete statuspoging per 24 uur.
+- Bewaar accustatus en laatste poging over herstarts; kaartjes verversen omzeilt de limiet niet.
+- Toon ouderdom en volgende controle van de status; statusfouten blokkeren kaartjes niet.
+
 # 0.2.0
 
 - Ophaalplanning in de webinterface: elk uur of dagelijks op een vast lokaal tijdstip.

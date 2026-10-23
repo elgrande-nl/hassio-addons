@@ -268,6 +268,45 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 await route.handler(request)
             store.db.close()
 
+    async def test_status_is_limited_across_refreshes_and_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            config = {'email': 'test', 'password': 'test', 'history_days': 7,
+                      'telegram': {'enabled': False}, 'sftp': {'enabled': False}}
+            monitor = Monitor(config, store)
+            monitor.bb.refresh = AsyncMock()
+            monitor.bb.refresh_feed = AsyncMock(return_value=[])
+            await monitor.sync()
+            await monitor.sync()
+            self.assertEqual(monitor.bb.refresh.await_count, 1)
+            self.assertEqual(monitor.bb.refresh_feed.await_count, 2)
+            updated = monitor.status['status_updated']
+            again = Monitor(config, store)
+            self.assertEqual(again.status['status_updated'], updated)
+            again.bb.refresh = AsyncMock()
+            await again.refresh_status_if_due()
+            again.bb.refresh.assert_not_awaited()
+            store.set('last_status_attempt', '2020-01-01T00:00:00+00:00')
+            await again.refresh_status_if_due()
+            self.assertEqual(again.bb.refresh.await_count, 1)
+            store.db.close()
+
+    async def test_status_failure_does_not_block_cards_or_retry_early(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            config = {'email': 'test', 'password': 'test', 'history_days': 7,
+                      'telegram': {'enabled': False}, 'sftp': {'enabled': False}}
+            monitor = Monitor(config, store)
+            monitor.bb.refresh = AsyncMock(side_effect=OSError('offline'))
+            monitor.bb.refresh_feed = AsyncMock(return_value=[])
+            await monitor.sync()
+            await monitor.sync()
+            self.assertEqual(monitor.bb.refresh.await_count, 1)
+            self.assertEqual(monitor.bb.refresh_feed.await_count, 2)
+            self.assertIn('OSError', monitor.status['status_error'])
+            self.assertIsNone(monitor.status['error'])
+            store.db.close()
+
     async def test_missing_credentials_gives_actionable_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
@@ -286,10 +325,10 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             monitor = Monitor({'email': 'test', 'password': 'secret-password'}, store)
             monitor.bb.refresh = AsyncMock(side_effect=ValueError('secret-password https://signed-url'))
             with self.assertLogs('birdbuddy_addon', level='WARNING') as captured:
-                await monitor.check()
-            self.assertIn('aanmelden en apparaatstatus ophalen', monitor.status['error'])
-            self.assertIn('ValueError', monitor.status['error'])
-            output = ' '.join(captured.output) + monitor.status['error']
+                await monitor.refresh_status_if_due()
+            self.assertIn('dagelijkse apparaatstatus ophalen', monitor.status['status_error'])
+            self.assertIn('ValueError', monitor.status['status_error'])
+            output = ' '.join(captured.output) + monitor.status['status_error']
             self.assertNotIn('secret-password', output)
             self.assertNotIn('signed-url', output)
             self.assertIn('app.py:', output)

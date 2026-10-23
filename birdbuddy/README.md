@@ -31,7 +31,11 @@ Open **Instellingen · ophaalplanning** in de webinterface en kies **Elk uur**
 of **Eenmaal per dag**. Bij dagelijks kies je een lokaal tijdstip en tijdzone
 (standaard `Europe/Amsterdam`). Opslaan werkt zonder herstart en de keuze blijft
 bewaard in de lokale database. Een wijziging tijdens het ophalen geldt na die ronde.
-De planning geldt voor apparaatstatus en kaartjes, gevolgd door verzending.
+De planning geldt alleen voor kaartjes, gevolgd door verzending. De accu- en
+apparaatstatus worden onafhankelijk maximaal eenmaal per 24 uur opgevraagd.
+De laatste status en het tijdstip blijven na een herstart bewaard. Ook na een
+mislukte poging geldt de wachttijd van 24 uur. Handmatig kaartjes verversen
+omzeilt deze limiet niet; een oude accustand kan dus bewust blijven staan.
 **Nu verversen** blijft handmatig beschikbaar en verschuift de planning niet.
 
 Elk uur is de standaard: een eerste controle bij de eerste start en daarna steeds
@@ -177,3 +181,8 @@ Telegram-tests zijn begrensd tot 20 MiB totaal (foto’s maximaal 10 MiB per stu
 Te grote tests worden vóór verzending geweigerd. Automatisch worden maximaal vier
 mediabestanden per controleronde geprobeerd; de rest blijft in de wachtrij.
 Deze limieten beperken belasting, maar garanderen geen vrij geheugen op de HA-host.
+
+De client leest kaartjes via de Bird Buddy-cloudfeed. Deze route vraagt niet
+expliciet om een apparaatstatusverversing of livestream. Aanmelden of een
+cloudrespons kan wel door Bird Buddy meegeleverde feedergegevens bevatten;
+we kunnen niet garanderen hoe hun backend intern met het apparaat communiceert.
