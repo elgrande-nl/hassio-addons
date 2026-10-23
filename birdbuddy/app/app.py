@@ -154,16 +154,19 @@ class Monitor:
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
                 response.raise_for_status()
                 content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-                prefix = b""
-                if not content_type.startswith(("image/", "video/")):
-                    if content_type not in ("", "application/octet-stream", "binary/octet-stream"):
-                        raise MediaError("Download geweigerd: de server levert geen foto of video.")
-                    try:
-                        prefix = await response.content.readexactly(12)
-                    except asyncio.IncompleteReadError as exc:
-                        raise MediaError("Download bevat een leeg of onvolledig mediabestand.") from exc
-                    if not media_signature(prefix):
-                        raise MediaError("Download heeft geen herkenbaar foto- of videoformaat.")
+                # Signed storage URLs can advertise non-media MIME types.
+                # Inspect bytes for every response, including image/video headers.
+                try:
+                    prefix = await response.content.readexactly(12)
+                except asyncio.IncompleteReadError as exc:
+                    raise MediaError("Download bevat een leeg of onvolledig mediabestand.") from exc
+                if not media_signature(prefix):
+                    known_types = {"text/html", "text/plain", "application/json", "application/xml",
+                                   "text/xml", "application/octet-stream", "image/jpeg", "video/mp4"}
+                    safe_type = content_type if content_type in known_types else "onbekend"
+                    raise MediaError(
+                        "Download bevat geen herkenbare JPEG-, PNG-, GIF-, WebP- of MP4-media "
+                        f"(Content-Type: {safe_type}). Mogelijk een foutpagina of verlopen downloadadres")
                 size = len(prefix)
                 with temporary.open("wb") as output:
                     output.write(prefix)

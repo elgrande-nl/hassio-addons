@@ -33,11 +33,17 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
             monitor = Monitor({'email': 'test', 'password': 'test'}, store)
-            for prefix, accepted in [(b'\xff\xd8\xff' + b'0' * 9, True),
-                                     (b'0000ftypisom', True),
-                                     (b'<html>error!', False)]:
+            for content_type, prefix, accepted in [
+                    ('application/octet-stream', b'\xff\xd8\xff' + b'0' * 9, True),
+                    ('text/plain', b'\xff\xd8\xff' + b'0' * 9, True),
+                    ('application/binary', b'0000ftypisom', True),
+                    ('image/jpeg', b'\xff\xd8\xff' + b'0' * 9, True),
+                    ('application/octet-stream', b'<html>error!', False),
+                    ('text/html', b'<html>error!', False),
+                    ('image/jpeg', b'<html>error!', False),
+                    ('application/json', b'{"error":123', False)]:
                 response = MagicMock()
-                response.headers = {'Content-Type': 'application/octet-stream'}
+                response.headers = {'Content-Type': content_type}
                 response.content.readexactly = AsyncMock(return_value=prefix)
                 async def chunks(size):
                     yield b'rest-of-file'

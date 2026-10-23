@@ -1,3 +1,9 @@
+# 0.1.4
+
+- Herken mediabestanden aan de inhoud, ook bij afwijkende downloadheaders.
+- Weiger foutpagina’s ook wanneer de server deze als foto of video aanbiedt.
+- Meld bij niet-herkende inhoud het bekende downloadtype zonder URL of bestandsinhoud te loggen.
+
 # 0.1.3
 
 - Accepteer geldige foto’s en video’s met een algemeen binair downloadtype na controle van de bestandsheader.

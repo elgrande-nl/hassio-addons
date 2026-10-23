@@ -1,6 +1,6 @@
 {
   "name": "Bird Buddy",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "slug": "birdbuddy",
   "description": "Recente Bird Buddy-kaartjes, apparaatstatus, Telegram en SFTP",
   "arch": ["aarch64", "amd64"],
