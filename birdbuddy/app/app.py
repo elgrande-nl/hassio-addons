@@ -29,6 +29,29 @@ class ConfigurationError(ValueError):
     """A configuration problem whose message is safe to show."""
 
 
+class MediaError(ValueError):
+    """A media problem with a safe, user-facing explanation."""
+
+
+def media_signature(data):
+    return (data.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a"))
+            or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+            or data[4:8] == b"ftyp")
+
+
+def error_location(exc):
+    return " > ".join(f"{Path(f.filename).name}:{f.lineno} ({f.name})"
+                      for f in traceback.extract_tb(exc.__traceback__))
+
+
+def card_error(exc, stage):
+    if isinstance(exc, MediaError):
+        return str(exc)
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return f"{stage}: server antwoordt HTTP {exc.status}"
+    return f"{stage}: {type(exc).__name__}"
+
+
 def sync_error(exc, stage):
     if isinstance(exc, ConfigurationError):
         return str(exc)
@@ -130,14 +153,24 @@ class Monitor:
         try:
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
                 response.raise_for_status()
-                if not response.headers.get("Content-Type", "").startswith(("image/", "video/")):
-                    raise ValueError("Unexpected media type")
-                size = 0
+                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                prefix = b""
+                if not content_type.startswith(("image/", "video/")):
+                    if content_type not in ("", "application/octet-stream", "binary/octet-stream"):
+                        raise MediaError("Download geweigerd: de server levert geen foto of video.")
+                    try:
+                        prefix = await response.content.readexactly(12)
+                    except asyncio.IncompleteReadError as exc:
+                        raise MediaError("Download bevat een leeg of onvolledig mediabestand.") from exc
+                    if not media_signature(prefix):
+                        raise MediaError("Download heeft geen herkenbaar foto- of videoformaat.")
+                size = len(prefix)
                 with temporary.open("wb") as output:
+                    output.write(prefix)
                     async for chunk in response.content.iter_chunked(65536):
                         size += len(chunk)
                         if size > MAX_MEDIA:
-                            raise ValueError("Media exceeds 100 MiB")
+                            raise MediaError("Mediabestand is groter dan de limiet van 100 MiB.")
                         output.write(chunk)
             temporary.replace(target)
         finally:
@@ -166,7 +199,7 @@ class Monitor:
             if cfg["enabled"]:
                 first = not self.store.get("initialized_" + dest)
                 destinations[dest] = first and not cfg["send_existing"]
-        failed = False
+        errors = []
         for node in reversed(cards):
             if node.node_id in existing:
                 continue
@@ -175,31 +208,40 @@ class Monitor:
                 continue
             media = []
             try:
+                card_stage = "bezoeker identificeren"
                 # New feed nodes have no media until visitor identification.
                 postcard = await self.bb.identify_postcard(node) if kind == "FeedItemNewPostcard" else CollectedPostcard(node)
+                card_stage = "mediagegevens lezen"
                 for item in postcard.medias:
                     url = item.content_url or item.thumbnail_url
                     if not url:
-                        raise ValueError("Missing media URL")
+                        raise MediaError("Bird Buddy levert geen downloadadres voor deze media.")
                     filename = hashlib.sha256((node.node_id + item.id).encode()).hexdigest() + (
                         ".mp4" if item.is_video else ".jpg")
                     media.append({"file": filename, "video": item.is_video})
+                    card_stage = "foto of video downloaden"
                     await self.download(url, filename)
                 if not media:
-                    continue
+                    raise MediaError("Bird Buddy levert nog geen media voor dit kaartje.")
+                card_stage = "kaartje opslaan"
                 title = ", ".join(s.name for s in postcard.species) or "Vogelbezoek"
                 self.store.add({"id": node.node_id, "created": node.get("createdAt") or now(),
                                 "title": title, "media": media}, destinations)
             except Exception as exc:
-                failed = True
+                detail = card_error(exc, card_stage)
+                errors.append(detail)
                 for item in media:
                     (self.store.root / item["file"]).unlink(missing_ok=True)
-                LOG.warning("Kaartje ophalen mislukt (%s)", type(exc).__name__)
-        if not failed:
+                LOG.warning("Kaartje ophalen mislukt: %s | %s", detail, error_location(exc))
+        if not errors:
             for dest in destinations:
                 self.store.set("initialized_" + dest, "yes")
         self.status["last_success"] = now()
-        self.status["error"] = "Een of meer kaartjes konden niet worden opgehaald; volgende ronde opnieuw." if failed else None
+        self.status["error"] = (
+            f"{len(errors)} kaartje(s) konden niet worden opgehaald. "
+            + "; ".join(dict.fromkeys(errors))
+            + ". Volgende controle opnieuw proberen."
+        ) if errors else None
 
     async def telegram(self, card, media):
         cfg = self.config["telegram"]
@@ -254,9 +296,7 @@ class Monitor:
         except Exception as exc:
             self.status["error"] = sync_error(exc, self.stage)
             # Include code locations, but never upstream exception text or locals.
-            locations = " > ".join(
-                f"{Path(frame.filename).name}:{frame.lineno} ({frame.name})"
-                for frame in traceback.extract_tb(exc.__traceback__))
+            locations = error_location(exc)
             LOG.warning("%s | %s", self.status["error"], locations)
 
     async def run(self):

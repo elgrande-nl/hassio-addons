@@ -2,10 +2,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from app import Monitor, Store
+from app import Monitor, Store, MediaError
 from birdbuddy.feed import FeedNode
 
 
@@ -29,6 +29,36 @@ class StoreTests(unittest.TestCase):
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_binary_download_checks_signature_and_cleans_rejected_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': 'test', 'password': 'test'}, store)
+            for prefix, accepted in [(b'\xff\xd8\xff' + b'0' * 9, True),
+                                     (b'0000ftypisom', True),
+                                     (b'<html>error!', False)]:
+                response = MagicMock()
+                response.headers = {'Content-Type': 'application/octet-stream'}
+                response.content.readexactly = AsyncMock(return_value=prefix)
+                async def chunks(size):
+                    yield b'rest-of-file'
+                response.content.iter_chunked = chunks
+                context = MagicMock()
+                context.__aenter__ = AsyncMock(return_value=response)
+                context.__aexit__ = AsyncMock(return_value=False)
+                monitor.session = MagicMock()
+                monitor.session.get.return_value = context
+                target = Path(tmp) / 'download.jpg'
+                if accepted:
+                    await monitor.download('https://example.com', target.name)
+                    self.assertEqual(target.read_bytes(), prefix + b'rest-of-file')
+                    target.unlink()
+                else:
+                    with self.assertRaises(MediaError):
+                        await monitor.download('https://example.com', target.name)
+                    self.assertFalse(target.exists())
+                self.assertFalse(target.with_suffix('.part').exists())
+            store.db.close()
+
     async def test_missing_credentials_gives_actionable_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
@@ -102,6 +132,13 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             await monitor.sync()
             self.assertEqual(monitor.download.await_count, 1)
             self.assertEqual(monitor.bb.identify_postcard.await_count, 1)
+            with store.db:
+                store.db.execute('DELETE FROM cards')
+                store.db.execute('DELETE FROM seen')
+            monitor.download = AsyncMock(side_effect=MediaError('Test downloadfout'))
+            await monitor.sync()
+            self.assertIn('Test downloadfout', monitor.status['error'])
+            self.assertEqual(store.cards(), [])
             store.db.close()
 
 

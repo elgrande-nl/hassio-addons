@@ -1,3 +1,8 @@
+# 0.1.3
+
+- Accepteer geldige foto’s en video’s met een algemeen binair downloadtype na controle van de bestandsheader.
+- Toon per kaartjesfout de oorzaak en stap; log de foutlocatie zonder geheime URL’s.
+
 # 0.1.2
 
 - Eigen kleurenpalet met donkerblauw, paars en koraal voor de webinterface.
