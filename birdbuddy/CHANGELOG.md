@@ -1,3 +1,8 @@
+# 0.1.2
+
+- Eigen kleurenpalet met donkerblauw, paars en koraal voor de webinterface.
+- Licht en donker thema, duidelijke toetsenbordfocus en contrasterende foutmeldingen.
+
 # 0.1.1
 
 - Duidelijke melding bij ontbrekende inloggegevens en mislukte aanmelding.
