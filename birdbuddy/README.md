@@ -20,6 +20,11 @@ voor zover de Bird Buddy-cloud deze gegevens levert).
 4. Start en kies **Open webinterface**. De interface gebruikt Home Assistant
    Ingress en opent geen losse netwerkpoort.
 
+De webinterface bundelt alle media van elk kaartje (waarneming) in één compacte
+stapel. Gebruik de pijlen om foto’s en video’s te bekijken en het huidige bestand
+te downloaden. Er staan maximaal vier waarnemingen op een pagina; onderaan
+blader je naar de vorige of volgende pagina.
+
 De standaardcontrole is elke 300 seconden. De add-on leest de laatste 7 dagen;
 `history_days` bepaalt de periode, `keep_cards` het aantal lokaal bewaarde
 kaartjes (standaard 100). Bij opstarten worden media naar `/share/birdbuddy`
@@ -58,6 +63,12 @@ oude kaartjes post. Zet dit vóór de eerste start op `true` om ook de ingelezen
 kaartjes te versturen. Kaartjes die al lokaal aanwezig waren vóór het inschakelen
 van een bestemming worden niet achteraf toegevoegd aan de verzendwachtrij.
 Foto's en video's worden afzonderlijk verzonden met de vogelnaam als bijschrift.
+
+Gebruik **Telegram testen** bovenaan de webinterface om één tekstbericht te sturen
+naar dezelfde ingestelde bestemming. Deze test werkt ook als Bird Buddy nog geen
+kaartjes kan ophalen. De uitkomst verschijnt onder de knoppen. Dit test tekst;
+voor foto's en video's blijft `allowlist_external_dirs` nodig. Bij een time-out
+kan het bericht toch zijn aangekomen: controleer Telegram voordat je opnieuw klikt.
 
 ## SFTP (optioneel, kan tegelijk met Telegram)
 
@@ -107,3 +118,32 @@ python3 -m venv /tmp/birdbuddy-venv
 
 Een echte installatie vereist aanvullend testen met je Bird Buddy-account,
 Home Assistant Supervisor en eventueel je Telegram-kanaal/SFTP-server.
+
+## Beveiliging en AppArmor
+
+De add-on bevat een eigen `apparmor.txt` in afdwingende modus, naast Ingress
+zonder gepubliceerde poorten. Het profiel laat Python en zijn bibliotheken
+lezen/uitvoeren, staat netwerkverkeer toe voor Ingress, DNS, Bird Buddy,
+Home Assistant en SFTP, en beperkt schrijven tot `/share/birdbuddy` en `/tmp`.
+Bestanden elders in `/share` zijn alleen leesbaar voor het instelbare
+`known_hosts`-bestand. Er is geen uitvoering van shells of losse SSH-programma’s
+nodig; SFTP draait binnen Python.
+
+De verwachte score is **8** zodra Supervisor het profiel succesvol heeft geladen:
+basisscore 5, Ingress +2 en een geladen eigen AppArmor-profiel +1. De winkel kan
+vóór installatie nog 7 tonen. De score zegt niets over de werking van de
+Bird Buddy-API en is geen volledige beveiligingsaudit.
+
+Controle na installeren/updaten op Home Assistant OS:
+
+1. Laat de beschermingsmodus ingeschakeld en controleer of de add-on start.
+2. Test status ophalen, kaartjes downloaden, lokaal bewaren, afspelen en
+   downloaden, Telegram testen en (indien ingesteld) SFTP.
+3. Controleer de Supervisor-/hostlogboeken op fouten bij het laden van het
+   profiel en `apparmor="DENIED"`. Meld bij een blokkade de geweigerde
+   bestandslocatie/operatie zodat het profiel gericht kan worden aangepast.
+
+Het AppArmor-profiel kan op deze macOS-ontwikkelomgeving niet door de Linux-kernel
+worden geladen of getest. Controle van dit profiel op de HA-host blijft nodig.
+Zie [Home Assistant: beveiliging](https://contributors.home-assistant.io/apps/guides/security/)
+en [berekening veiligheidsscore](https://contributors.home-assistant.io/apps/reference/security-rating/).

@@ -8,3 +8,7 @@ webinterface vanuit Home Assistant. Telegram en SFTP staan standaard uit.
 Telegram gebruikt de bestaande Home Assistant-bot en vereist toegang tot
 `/share/birdbuddy` via `homeassistant.allowlist_external_dirs`.
 SFTP vereist een vooraf gecontroleerd `known_hosts`-bestand.
+
+Vanaf 0.1.7 staan er vier waarnemingen per pagina. Het eigen AppArmor-profiel
+wordt door Supervisor geladen. Controleer na de update de werking en hostlogboeken;
+zie de beveiligingssectie in README.md.

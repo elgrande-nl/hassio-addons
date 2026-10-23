@@ -4,29 +4,94 @@
 :root{font-family:system-ui,sans-serif;color-scheme:light;--background:#f2f3fa;--surface:#fff;--text:#202944;--muted:#58617a;--accent:#6040b8;--accent-hover:#4c2e9a;--coral:#c75460;--border:#dce0ee;--media:#e7e9f3;--error:#a42b49;--error-bg:#fff0f3;color:var(--text);background:var(--background)}
 body{max-width:1200px;margin:auto;padding:28px}
 header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-top:4px solid var(--accent);padding-top:16px}
-h1{margin-bottom:4px}button{font:inherit;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:12px;padding:12px 20px;cursor:pointer}button:hover{background:var(--accent-hover)}
+.actions{display:flex;flex-wrap:wrap;gap:10px}h1{margin-bottom:4px}button{font:inherit;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:12px;padding:12px 20px;cursor:pointer}button:hover{background:var(--accent-hover)}
 a:focus-visible,button:focus-visible{outline:3px solid var(--coral);outline-offset:4px}
 #feeders,.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:20px;margin:24px 0}
 .feeder,article{background:var(--surface);border:1px solid var(--border);border-radius:18px;overflow:hidden;box-shadow:0 4px 20px #20294409}
 .feeder{border-top:3px solid var(--coral)}.feeder,article .body{padding:20px}
 img,video{width:100%;max-height:400px;object-fit:contain;background:var(--media);display:block}
 .muted{color:var(--muted);font-size:.9rem}.error{color:var(--error);background:var(--error-bg);border-left:4px solid var(--error);border-radius:8px;padding:14px 18px;white-space:pre-wrap}
-a{color:var(--accent);text-underline-offset:3px}a:hover{color:var(--accent-hover)}h2{font-size:1.1rem}#error:empty{display:none}#refresh:disabled{opacity:.6;cursor:wait}
+a{color:var(--accent);text-underline-offset:3px}a:hover{color:var(--accent-hover)}h2{font-size:1.1rem}#error:empty{display:none}button:disabled{opacity:.45;cursor:default}
+.media-view img,.media-view video{height:260px;max-height:none}.media-nav,.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px}.media-nav button,.pagination button{padding:8px 14px}.media-nav{border-bottom:1px solid var(--border)}.media-count{font-size:.85rem;color:var(--muted)}.pagination{padding:12px 0;flex-wrap:wrap}.stack-label{color:var(--accent);font-size:.85rem;font-weight:600}.pagination[hidden]{display:none}
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--background:#141827;--surface:#20263b;--text:#edf0ff;--muted:#b4bed7;--accent:#c4adff;--accent-hover:#dfd1ff;--coral:#f28e99;--border:#38415c;--media:#191e30;--error:#ffb1c4;--error-bg:#3b2233}button{color:#24183e}}
 @media(max-width:480px){body{padding:18px}header{align-items:flex-start;flex-wrap:wrap}}
 </style>
-<header><div><h1>Bird Buddy</h1><div class="muted">Een kijkje bij je gevleugelde bezoekers</div></div><button id="refresh">Nu verversen</button></header>
-<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Nieuwe kaartjes verschijnen na de volgende controle. Alleen media die Bird Buddy beschikbaar stelt wordt getoond.</p><section id="cards" class="cards"></section>
+<header><div><h1>Bird Buddy</h1><div class="muted">Een kijkje bij je gevleugelde bezoekers</div></div><div class="actions"><button id="refresh">Nu verversen</button> <button id="telegram-test">Telegram testen</button></div></header>
+<p id="telegram-result" class="muted" role="status" aria-live="polite"></p>
+<p id="updated" class="muted">Status ophalen…</p><p id="error" class="error" role="status"></p><section id="feeders"></section><h2>Recente kaartjes</h2><p class="muted">Foto’s en video’s zijn gebundeld per waarneming. Blader binnen een kaart of bekijk de volgende pagina met waarnemingen.</p><section id="cards" class="cards" aria-label="Waarnemingen"></section><nav id="pagination" class="pagination" aria-label="Pagina’s met waarnemingen" hidden><button id="page-prev">Vorige pagina</button><span id="page-info" class="muted" role="status" aria-live="polite"></span><button id="page-next">Volgende pagina</button></nav>
 <script>
 const $=id=>document.getElementById(id);
 function element(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el}
 const date=value=>value?new Date(value).toLocaleString('nl-NL'):'nog geen succesvolle controle';
-let rendering='';
+const pageSize=4;
+let rendering='',page=1,cards=[],deliveries=[];
+const mediaPositions=new Map();
+function renderCard(card){
+    const article=element('article');
+    const view=element('div',undefined,'media-view');
+    const nav=element('div',undefined,'media-nav');
+    const previous=element('button','←'),next=element('button','→');
+    previous.setAttribute('aria-label','Vorige foto of video van '+card.title);
+    next.setAttribute('aria-label','Volgende foto of video van '+card.title);
+    const count=element('span',undefined,'media-count');
+    count.setAttribute('aria-live','polite');
+    const download=element('a');
+    function showMedia(position){
+        const index=Math.max(0,Math.min(position,card.media.length-1));
+        mediaPositions.set(card.id,index);
+        view.querySelector('video')?.pause();
+        view.replaceChildren();
+        const media=card.media[index];
+        if(!media){count.textContent='Geen media';previous.disabled=next.disabled=true;download.hidden=true;return}
+        const el=element(media.video?'video':'img');
+        el.src='media/'+encodeURIComponent(media.file);
+        if(media.video){el.controls=true;el.preload='none'}else{el.alt=card.title+' — foto '+(index+1);el.loading='lazy'}
+        view.append(el);
+        count.textContent=(media.video?'Video ':'Foto ')+(index+1)+' van '+card.media.length;
+        previous.disabled=index===0;next.disabled=index===card.media.length-1;
+        download.textContent=media.video?'Deze video opslaan':'Deze foto opslaan';
+        download.href=el.src;download.download=media.file;
+    }
+    previous.onclick=()=>showMedia((mediaPositions.get(card.id)||0)-1);
+    next.onclick=()=>showMedia((mediaPositions.get(card.id)||0)+1);
+    nav.append(previous,count,next);
+    const body=element('div',undefined,'body');
+    body.append(element('div','1 waarneming · '+card.media.length+' bestand'+(card.media.length===1?'':'en'),'stack-label'),element('h2',card.title),element('p',date(card.created),'muted'),download);
+    for(const d of deliveries.filter(d=>d.card===card.id))body.append(element('p',d.destination+': '+(d.done?'afgehandeld':d.error?'wacht op nieuwe poging ('+d.error+')':'in wachtrij'),'muted'));
+    article.append(view,nav,body);showMedia(mediaPositions.get(card.id)||0);
+    return article;
+}
+function renderCards(){
+    const pages=Math.max(1,Math.ceil(cards.length/pageSize));
+    page=Math.min(Math.max(1,page),pages);
+    $('cards').querySelectorAll('video').forEach(video=>video.pause());
+    const start=(page-1)*pageSize;
+    $('cards').replaceChildren(...cards.slice(start,start+pageSize).map(renderCard));
+    if(!cards.length)$('cards').append(element('p','Er zijn nog geen kaartjes opgeslagen.'));
+    $('pagination').hidden=cards.length===0;
+    $('page-info').textContent='Pagina '+page+' van '+pages+' · '+(start+1)+'–'+Math.min(start+pageSize,cards.length)+' van '+cards.length+' waarnemingen';
+    $('page-prev').disabled=page===1;$('page-next').disabled=page===pages;
+}
+function changePage(delta){page+=delta;renderCards();$('cards').scrollIntoView({block:'start',behavior:'smooth'})}
+$('page-prev').onclick=()=>changePage(-1);
+$('page-next').onclick=()=>changePage(1);
 async function load(){try{const response=await fetch('api/state',{cache:'no-store'});if(!response.ok)throw Error('Status niet beschikbaar ('+response.status+')');const data=await response.json();$('updated').textContent='Laatste controle: '+date(data.last_success);$('error').textContent=data.error||'';
 $('feeders').replaceChildren(...data.feeders.map(f=>{const box=element('div',undefined,'feeder');box.append(element('h2',f.name),element('p',f.state),element('p','Batterij: '+(f.battery??'onbekend')+(f.battery!=null?'%':'')+(f.charging?' · laden':'')),element('p','Wifi: '+(f.signal??'onbekend')+' · Firmware: '+(f.firmware??'onbekend'),'muted'));return box}));
-const signature=JSON.stringify([data.cards,data.deliveries]);if(signature===rendering)return;rendering=signature;
-$('cards').replaceChildren(...data.cards.map(card=>{const article=element('article');for(const media of card.media){const el=element(media.video?'video':'img');el.src='media/'+encodeURIComponent(media.file);if(media.video){el.controls=true;el.preload='none'}else{el.alt=card.title;el.loading='lazy'}article.append(el)}const body=element('div',undefined,'body');body.append(element('h2',card.title),element('p',date(card.created),'muted'));for(const m of card.media){const a=element('a',m.video?'Video opslaan':'Foto opslaan');a.href='media/'+encodeURIComponent(m.file);a.download=m.file;body.append(a,element('br'))}for(const d of data.deliveries.filter(d=>d.card===card.id)){body.append(element('p',d.destination+': '+(d.done?'afgehandeld':d.error?'wacht op nieuwe poging ('+d.error+')':'in wachtrij'),'muted'))}article.append(body);return article}));if(!data.cards.length)$('cards').append(element('p','Er zijn nog geen kaartjes opgeslagen.'));
+const signature=JSON.stringify([data.cards,data.deliveries]);if(signature===rendering)return;
+// Keep the first visible sighting on screen when new sightings arrive.
+const anchor=page>1?cards[(page-1)*pageSize]?.id:null;
+cards=data.cards;deliveries=data.deliveries;rendering=signature;
+if(anchor){const index=cards.findIndex(card=>card.id===anchor);if(index>=0)page=Math.floor(index/pageSize)+1}
+const liveIds=new Set(cards.map(card=>card.id));
+for(const id of mediaPositions.keys())if(!liveIds.has(id))mediaPositions.delete(id);
+renderCards();
 }catch(err){$('error').textContent=err.message}}
 $('refresh').onclick=async()=>{const b=$('refresh');b.disabled=true;try{const r=await fetch('api/refresh',{method:'POST',headers:{'X-BirdBuddy-UI':'1'}});if(!r.ok)throw Error('Verversen mislukt');$('updated').textContent='Controle aangevraagd…'}catch(e){$('error').textContent=e.message}finally{b.disabled=false}};
+$('telegram-test').onclick=async()=>{
+const button=$('telegram-test'),result=$('telegram-result');button.disabled=true;button.textContent='Test versturen…';result.className='muted';result.textContent='Testbericht wordt verstuurd…';
+try{const response=await fetch('api/telegram/test',{method:'POST',headers:{'X-BirdBuddy-UI':'1'}});const data=await response.json();result.textContent=data.message;if(!response.ok||!data.ok)result.className='error'}
+catch(e){result.className='error';result.textContent='Geen bevestiging ontvangen. Controleer eerst je Telegram-chat voordat je opnieuw test.'}
+finally{button.disabled=false;button.textContent='Telegram testen'}
+};
 load();setInterval(load,15000);
 </script></html>

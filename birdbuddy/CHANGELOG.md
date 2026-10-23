@@ -1,3 +1,20 @@
+# 0.1.7
+
+- Vier waarnemingen per pagina.
+- Eigen AppArmor-profiel met beperkte bestandstoegang en zonder shelluitvoering.
+- Verwachte veiligheidsscore 8 wanneer het profiel door Supervisor is geladen; validatie op de Home Assistant-host vereist.
+
+# 0.1.6
+
+- Eén compacte mediastapel per waarneming met vorige/volgende-knoppen en bestandsteller.
+- Paginering met negen waarnemingen per pagina.
+- Bewaar de gekozen mediapositie bij statusupdates en stop video’s bij bladeren.
+
+# 0.1.5
+
+- Knop Telegram testen in de webinterface met bevestiging en duidelijke foutmeldingen.
+- De test stuurt één tekstbericht via de bestaande Home Assistant-bot, onafhankelijk van Bird Buddy-kaartjes.
+
 # 0.1.4
 
 - Herken mediabestanden aan de inhoud, ook bij afwijkende downloadheaders.

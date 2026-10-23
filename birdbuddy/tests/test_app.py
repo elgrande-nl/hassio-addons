@@ -1,11 +1,15 @@
 import sys
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from app import Monitor, Store, MediaError
+from app import Monitor, Store, MediaError, ConfigurationError, make_app
+import aiohttp
+from aiohttp import web
 from birdbuddy.feed import FeedNode
 
 
@@ -63,6 +67,63 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                         await monitor.download('https://example.com', target.name)
                     self.assertFalse(target.exists())
                 self.assertFalse(target.with_suffix('.part').exists())
+            store.db.close()
+
+    async def test_telegram_uses_configured_destination_without_birdbuddy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': '', 'telegram': {
+                'enabled': True, 'chat_id': '-1001234', 'config_entry_id': 'entry'}}, store)
+            response = MagicMock()
+            response.read = AsyncMock()
+            context = MagicMock()
+            context.__aenter__ = AsyncMock(return_value=response)
+            context.__aexit__ = AsyncMock(return_value=False)
+            monitor.session = MagicMock(closed=False)
+            monitor.session.post.return_value = context
+            with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-token'}):
+                await monitor.test_telegram()
+            args, kwargs = monitor.session.post.call_args
+            self.assertTrue(args[0].endswith('/telegram_bot/send_message'))
+            self.assertEqual(kwargs['json']['chat_id'], [-1001234])
+            self.assertEqual(kwargs['json']['config_entry_id'], 'entry')
+            self.assertIn('testbericht', kwargs['json']['message'])
+            monitor.config['telegram']['enabled'] = False
+            with self.assertRaises(ConfigurationError):
+                await monitor.test_telegram()
+            self.assertEqual(monitor.session.post.call_count, 1)
+            monitor.config['telegram']['enabled'] = True
+            monitor.config['telegram']['chat_id'] = 'invalid'
+            with patch.dict(os.environ, {'SUPERVISOR_TOKEN': 'test-token'}):
+                with self.assertRaises(ConfigurationError):
+                    await monitor.test_telegram()
+            self.assertEqual(monitor.session.post.call_count, 1)
+            store.db.close()
+
+    async def test_telegram_endpoint_reports_errors_and_requires_ui_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            monitor = Monitor({'email': '', 'password': ''}, store)
+            app = make_app(monitor)
+            route = next(r for r in app.router.routes()
+                         if r.resource.canonical == '/api/telegram/test')
+            request = MagicMock(headers={})
+            monitor.test_telegram = AsyncMock()
+            with self.assertRaises(web.HTTPForbidden):
+                await route.handler(request)
+            monitor.test_telegram.assert_not_awaited()
+            request.headers = {'X-BirdBuddy-UI': '1'}
+            response = await route.handler(request)
+            self.assertTrue(json.loads(response.body)['ok'])
+            monitor.test_telegram.side_effect = aiohttp.ClientResponseError(
+                MagicMock(), (), status=400, message='secret', headers={})
+            response = await route.handler(request)
+            self.assertEqual(response.status, 502)
+            self.assertIn('chat-ID', json.loads(response.body)['message'])
+            self.assertNotIn('secret', response.text)
+            monitor.test_telegram.side_effect = ConfigurationError('Telegram staat uit')
+            response = await route.handler(request)
+            self.assertEqual(response.status, 400)
             store.db.close()
 
     async def test_missing_credentials_gives_actionable_message(self):

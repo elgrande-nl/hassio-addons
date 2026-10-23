@@ -246,22 +246,37 @@ class Monitor:
             + ". Volgende controle opnieuw proberen."
         ) if errors else None
 
-    async def telegram(self, card, media):
+    async def telegram_call(self, action, data):
         cfg = self.config["telegram"]
         token = os.environ.get("SUPERVISOR_TOKEN")
         if not token:
-            raise ValueError("Missing Supervisor token")
-        data = {"file": str(self.store.root / media["file"]), "caption": card["title"],
-                "parse_mode": "plain_text"}
+            raise ConfigurationError("Home Assistant API-toegang ontbreekt. Start de add-on vanuit Home Assistant.")
+        if self.session is None or self.session.closed:
+            raise ConfigurationError("De add-on start nog op. Probeer het over enkele seconden opnieuw.")
         if cfg["chat_id"]:
-            data["chat_id"] = [int(cfg["chat_id"])]
+            try:
+                data["chat_id"] = [int(cfg["chat_id"])]
+            except ValueError as exc:
+                raise ConfigurationError("Vul bij telegram.chat_id een numeriek chat-ID in, bijvoorbeeld -1001234567890.") from exc
         if cfg["config_entry_id"]:
             data["config_entry_id"] = cfg["config_entry_id"]
-        action = "send_video" if media["video"] else "send_photo"
         async with self.session.post("http://supervisor/core/api/services/telegram_bot/" + action,
-             headers={"Authorization": "Bearer " + token}, json=data) as response:
+             headers={"Authorization": "Bearer " + token}, json=data,
+             timeout=aiohttp.ClientTimeout(total=30)) as response:
             response.raise_for_status()
             await response.read()
+
+    async def telegram(self, card, media):
+        await self.telegram_call("send_video" if media["video"] else "send_photo", {
+            "file": str(self.store.root / media["file"]), "caption": card["title"],
+            "parse_mode": "plain_text"})
+
+    async def test_telegram(self):
+        if not self.config["telegram"]["enabled"]:
+            raise ConfigurationError("Telegram staat uit. Zet telegram.enabled aan, sla op en herstart de add-on.")
+        await self.telegram_call("send_message", {
+            "message": "Bird Buddy: dit is een testbericht vanuit je Home Assistant-add-on.",
+            "parse_mode": "plain_text"})
 
     async def deliver(self):
         for card in self.store.cards():
@@ -350,6 +365,33 @@ def make_app(monitor):
         monitor.wake.set()
         return web.json_response({"queued": True})
 
+    async def telegram_test(request):
+        if request.headers.get("X-BirdBuddy-UI") != "1":
+            raise web.HTTPForbidden()
+        try:
+            await monitor.test_telegram()
+        except ConfigurationError as exc:
+            return web.json_response({"ok": False, "message": str(exc)}, status=400)
+        except aiohttp.ClientResponseError as exc:
+            hints = {
+                400: "Controleer het chat-ID, de toegestane chats en eventueel het config-entry-ID.",
+                401: "Controleer de Home Assistant API-toegang en Telegram-integratie.",
+                403: "Controleer de rechten van de bot en de toegestane chats.",
+                404: "Controleer of de Telegram bot-integratie in Home Assistant geladen is.",
+            }
+            message = (f"Home Assistant weigert de Telegram-test (HTTP {exc.status}). "
+                       + hints.get(exc.status, "Controleer de Telegram-integratie en Home Assistant-logboeken."))
+            return web.json_response({"ok": False, "message": message}, status=502)
+        except (asyncio.TimeoutError, aiohttp.ClientConnectionError):
+            return web.json_response({"ok": False, "message":
+                "Geen bevestiging van Home Assistant ontvangen. Controleer eerst Telegram voordat je opnieuw test; het bericht kan toch zijn verstuurd."}, status=504)
+        except Exception as exc:
+            LOG.warning("Telegram-test mislukt (%s) | %s", type(exc).__name__, error_location(exc))
+            return web.json_response({"ok": False, "message":
+                "Telegram-test mislukt. Controleer de Home Assistant-logboeken."}, status=502)
+        return web.json_response({"ok": True, "message":
+            "Testbericht verstuurd via Home Assistant. Controleer je ingestelde Telegram-chat of kanaal. Dit test alleen tekst; foto’s vereisen ook toegang tot /share/birdbuddy."})
+
     async def media(request):
         name = request.match_info["name"]
         allowed = {m["file"] for c in monitor.store.cards() for m in c["media"]}
@@ -360,6 +402,7 @@ def make_app(monitor):
     app.router.add_get("/", index)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/refresh", refresh)
+    app.router.add_post("/api/telegram/test", telegram_test)
     app.router.add_get("/media/{name}", media)
     app.cleanup_ctx.append(lifecycle)
     return app
