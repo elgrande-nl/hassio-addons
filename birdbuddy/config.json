@@ -1,0 +1,28 @@
+{
+  "name": "Bird Buddy",
+  "version": "0.1.0",
+  "slug": "birdbuddy",
+  "description": "Recente Bird Buddy-kaartjes, apparaatstatus, Telegram en SFTP",
+  "arch": ["aarch64", "amd64"],
+  "startup": "application",
+  "boot": "auto",
+  "init": false,
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:bird",
+  "panel_title": "Bird Buddy",
+  "homeassistant_api": true,
+  "map": ["share:rw"],
+  "options": {
+    "email": "", "password": "", "poll_seconds": 300,
+    "history_days": 7, "keep_cards": 100,
+    "telegram": {"enabled": false, "chat_id": "", "config_entry_id": "", "send_existing": false},
+    "sftp": {"enabled": false, "host": "", "port": 22, "username": "", "password": "", "directory": "/birdbuddy", "known_hosts": "", "send_existing": false}
+  },
+  "schema": {
+    "email": "str", "password": "password", "poll_seconds": "int(60,3600)",
+    "history_days": "int(1,90)", "keep_cards": "int(10,1000)",
+    "telegram": {"enabled": "bool", "chat_id": "str", "config_entry_id": "str", "send_existing": "bool"},
+    "sftp": {"enabled": "bool", "host": "str", "port": "port", "username": "str", "password": "password", "directory": "str", "known_hosts": "str", "send_existing": "bool"}
+  }
+}
